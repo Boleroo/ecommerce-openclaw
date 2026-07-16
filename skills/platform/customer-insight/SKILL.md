@@ -2,13 +2,11 @@
 name: customer-insight
 description: 客户分析：客户概览、新客/回头客比例、地域分布、客单价趋势、活跃客户。
 metadata:
-  {
-    "openclaw":
-      {
-        "emoji": "👥",
-        "requires": { "bins": ["curl", "jq"], "env": ["JD_API_ENDPOINT"] },
-      },
-  }
+  openclaw:
+    emoji: "👥"
+    requires: 
+      bins: ["curl", "jq"]
+      env: ["JD_API_ENDPOINT"]
 ---
 
 # 客户分析 (Customer Insight)

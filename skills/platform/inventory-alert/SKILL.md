@@ -2,13 +2,11 @@
 name: inventory-alert
 description: 库存监控：低库存预警、断货提醒、库存总览、补货建议。
 metadata:
-  {
-    "openclaw":
-      {
-        "emoji": "📦",
-        "requires": { "bins": ["curl", "jq"], "env": ["JD_API_ENDPOINT"] },
-      },
-  }
+  openclaw:
+    emoji: "📦"
+    requires: 
+      bins: ["curl", "jq"]
+      env: ["JD_API_ENDPOINT"]
 ---
 
 # 库存预警 (Inventory Alert)

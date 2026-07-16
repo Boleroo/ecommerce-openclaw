@@ -2,13 +2,11 @@
 name: product-ranking
 description: 查询商品排行：热销榜、滞销品、新品表现、品类分布、单品统计。
 metadata:
-  {
-    "openclaw":
-      {
-        "emoji": "🏆",
-        "requires": { "bins": ["curl", "jq"], "env": ["JD_API_ENDPOINT"] },
-      },
-  }
+  openclaw:
+    emoji: "🏆"
+    requires: 
+      bins: ["curl", "jq"]
+      env: ["JD_API_ENDPOINT"]
 ---
 
 # 商品排行 (Product Ranking)

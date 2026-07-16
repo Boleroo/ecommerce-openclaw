@@ -2,13 +2,11 @@
 name: sales-query
 description: 查询店铺销售数据：订单列表、订单详情、销售额、退货率、销售趋势。
 metadata:
-  {
-    "openclaw":
-      {
-        "emoji": "💰",
-        "requires": { "bins": ["curl", "jq"], "env": ["JD_API_ENDPOINT"] },
-      },
-  }
+  openclaw:
+    emoji: "💰"
+    requires: 
+      bins": ["curl", "jq"]
+      env": ["JD_API_ENDPOINT"]
 ---
 
 # 销售查询 (Sales Query)
