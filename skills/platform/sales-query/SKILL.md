@@ -5,8 +5,8 @@ metadata:
   openclaw:
     emoji: "💰"
     requires: 
-      bins": ["curl", "jq"]
-      env": ["JD_API_ENDPOINT"]
+      bins: ["curl", "jq"]
+      env: ["JD_API_ENDPOINT"]
 ---
 
 # 销售查询 (Sales Query)

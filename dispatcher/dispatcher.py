@@ -1,0 +1,160 @@
+import time
+from dataclasses import dataclass, field
+from uuid import uuid4
+
+from pydantic import ValidationError
+
+from .backend_client import BackendTransportError
+from .observation import Observation, ToolFailure, make_error
+from .registry import REGISTRY
+from .schemas import Identity, ToolCall
+from .validator import TRANSIENT_CODES, validate_postconditions, validate_response
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    max_retries: int = 2
+    backoff_seconds: float = 0.1
+
+    def __post_init__(self):
+        if type(self.max_retries) is not int or not 0 <= self.max_retries <= 2:
+            raise ValueError("max_retries must be an integer between 0 and 2")
+        if not 0 <= self.backoff_seconds <= 1:
+            raise ValueError("backoff_seconds must be between 0 and 1")
+
+
+@dataclass
+class Execution:
+    trace_id: str
+    identity: Identity | None = None
+    requests: list = field(default_factory=list)
+    retries_used: int = 0
+    write_attempted: bool = False
+
+
+class Dispatcher:
+    def __init__(self, backend, audit, registry=REGISTRY, retry_policy=None, sleep=time.sleep):
+        self.backend = backend
+        self.audit = audit
+        self.registry = registry
+        self.retry_policy = retry_policy or RetryPolicy()
+        self.sleep = sleep
+
+    def execute(self, tool, arguments, *, token=None):
+        return self.dispatch({"tool": tool, "arguments": arguments}, token=token)
+
+    def dispatch(self, payload, *, token=None):
+        state = Execution(trace_id=str(uuid4()))
+        tool_name = "<invalid>"
+        if isinstance(payload, dict) and isinstance(payload.get("tool"), str) and len(payload["tool"]) <= 128:
+            tool_name = payload["tool"]
+        audited_name = tool_name if self.registry.get(tool_name) else "<unknown>"
+        try:
+            self.audit.start(state.trace_id, audited_name)
+        except Exception:
+            return self._failure(tool_name, state, "AUDIT_UNAVAILABLE")
+        try:
+            call = ToolCall.model_validate(payload)
+            tool = self.registry.get(call.tool)
+            if tool is None:
+                raise ToolFailure("UNKNOWN_TOOL")
+            arguments = tool.input_model.model_validate(call.arguments)
+            if not isinstance(token, str) or not token or any(character.isspace() for character in token) or not token.isascii():
+                raise ToolFailure("UNAUTHENTICATED")
+            state.identity = self._request(
+                state, "GET", "/v1/auth/context", Identity, token=token,
+            )
+            if not tool.required_permissions <= set(state.identity.permissions):
+                raise ToolFailure("PERMISSION_DENIED")
+            before = self._preflight(tool, arguments, token, state)
+            result = self._invoke(tool, arguments, token, state)
+            try:
+                validate_postconditions(tool, arguments, result, before)
+            except ToolFailure:
+                if state.write_attempted:
+                    raise ToolFailure("WRITE_OUTCOME_UNKNOWN") from None
+                raise
+            observation = Observation(
+                success=True, tool=call.tool, error=None,
+                data=result.model_dump(mode="json"), trace_id=state.trace_id,
+            )
+        except ValidationError:
+            observation = self._failure(tool_name, state, "INVALID_ARGUMENT")
+        except ToolFailure as failure:
+            observation = self._failure(tool_name, state, failure.error.code)
+        except Exception:
+            observation = self._failure(tool_name, state, "WRITE_OUTCOME_UNKNOWN" if state.write_attempted else "INTERNAL_ERROR")
+        try:
+            self.audit.finish(observation, state.identity, state.requests)
+        except Exception:
+            return self._failure(tool_name, state, "WRITE_OUTCOME_UNKNOWN" if state.write_attempted else "AUDIT_UNAVAILABLE")
+        return observation
+
+    @staticmethod
+    def _failure(tool_name, state, code):
+        return Observation(success=False, tool=tool_name, error=make_error(code), data=None, trace_id=state.trace_id)
+
+    def _preflight(self, tool, arguments, token, state):
+        if tool.name == "refund_order":
+            read_tool = self.registry.get("get_order")
+            read_arguments = read_tool.input_model(order_id=arguments.order_id)
+            order = self._invoke(read_tool, read_arguments, token, state)
+            validate_postconditions(read_tool, read_arguments, order)
+            if order.status not in ("paid", "shipped", "delivered"):
+                raise ToolFailure("INVALID_BUSINESS_STATE")
+            if arguments.amount > order.remaining_refundable_amount:
+                raise ToolFailure("REFUND_AMOUNT_EXCEEDED")
+            return order
+        if tool.name == "change_price":
+            read_tool = self.registry.get("product_stats")
+            read_arguments = read_tool.input_model(sku=arguments.sku)
+            product = self._invoke(read_tool, read_arguments, token, state)
+            validate_postconditions(read_tool, read_arguments, product)
+            return product
+        return None
+
+    def _invoke(self, tool, arguments, token, state):
+        values = arguments.model_dump(mode="json", exclude_none=True)
+        path_values = {name: values.pop(name) for name in tool.path_fields}
+        endpoint = tool.endpoint.format(**path_values)
+        return self._request(
+            state, tool.method, endpoint, tool.output_model, token=token,
+            params=values if tool.method == "GET" else None,
+            json_body=values if tool.method != "GET" else None,
+            success_status=tool.success_status,
+        )
+
+    def _request(self, state, method, endpoint, output_model, *, token, params=None, json_body=None, success_status=200):
+        while True:
+            attempt = {"method": method, "endpoint": endpoint}
+            state.requests.append(attempt)
+            if method != "GET":
+                attempt["outcome"] = "dispatch_pending"
+                try:
+                    self.audit.checkpoint(state.trace_id, state.identity, state.requests)
+                except Exception:
+                    attempt["outcome"] = "AUDIT_UNAVAILABLE"
+                    raise ToolFailure("AUDIT_UNAVAILABLE") from None
+                state.write_attempted = True
+            try:
+                response = self.backend.request(
+                    method, endpoint, token=token, trace_id=state.trace_id,
+                    params=params, json_body=json_body,
+                )
+                attempt["status"] = response.status_code
+                result = validate_response(response, output_model, success_status)
+                attempt["outcome"] = "validated"
+                return result
+            except BackendTransportError as failure:
+                error = ToolFailure(failure.code)
+            except ToolFailure as failure:
+                error = failure
+            attempt["outcome"] = error.error.code
+            if method != "GET" and error.error.category in ("INFRASTRUCTURE", "RESPONSE"):
+                raise ToolFailure("WRITE_OUTCOME_UNKNOWN") from None
+            if method == "GET" and error.error.recoverable and error.error.code in TRANSIENT_CODES and state.retries_used < self.retry_policy.max_retries:
+                delay = self.retry_policy.backoff_seconds * (2 ** state.retries_used)
+                state.retries_used += 1
+                self.sleep(delay)
+                continue
+            raise error
