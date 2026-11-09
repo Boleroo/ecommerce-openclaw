@@ -87,8 +87,8 @@ for public demo data; use strict mode for tenant isolation of private data.
 Invalid supplied credentials never fall back to anonymous access.
 
 This remains a local authentication adapter rather than production identity
-infrastructure. Phase 3 RBAC and risk policies are enforced in the trusted
-backend. Approval execution and idempotency remain deferred.
+infrastructure. RBAC, risk policies, approvals, and financial idempotency are
+enforced in the trusted backend.
 
 ## Write APIs
 
@@ -120,7 +120,7 @@ Success returns HTTP 201 with `refund` and updated `order` objects.
 
 ```sh
 curl -s -X PATCH -H "Authorization: Bearer $API_TOKEN" \
-  -H 'Content-Type: application/json' -d '{"price":27900}' \
+  -H 'Content-Type: application/json' -d '{"price":30000}' \
   http://localhost:8080/v1/products/SHOE-WH-42/price
 ```
 
@@ -135,16 +135,17 @@ HTTP 200 with `product` and `previous_price`.
 | 403 | `PERMISSION_DENIED`, `APPROVAL_REQUIRED` |
 | 404 | `RESOURCE_NOT_FOUND` |
 | 409 | `INVALID_BUSINESS_STATE`, `REFUND_AMOUNT_EXCEEDED` |
+| 409 | `IDEMPOTENCY_CONFLICT`, `APPROVAL_INVALID`, `APPROVAL_FAILED` |
 | 500 | `INTERNAL_ERROR` |
 | 503 | `DATABASE_BUSY` |
 
 Writes use SQLite `BEGIN IMMEDIATE` transactions: balance checks, order updates,
 and refund inserts commit together, and concurrent refunds cannot overdraw the
-balance. Errors roll back changes. This does **not** provide request idempotency:
-retrying a successful partial refund can create another refund. Approval and
-idempotency workflows are deferred to later phases, along with Skill migration
-and the evaluation framework. These endpoints record local business
-state only; they do not call a payment provider.
+balance. Errors roll back changes. Add a stable `idempotency_key` JSON field or
+`Idempotency-Key` header to financial submissions to deduplicate them. Unkeyed
+legacy calls still represent new operations on every explicit invocation.
+These endpoints record local business state only; they do not call a payment
+provider. Skill migration and the evaluation framework remain later work.
 
 ## Phase 2: Controlled Tool Dispatcher
 
@@ -158,7 +159,7 @@ Caller → Dispatcher → authenticated Flask API → business SQLite
 
 `dispatcher/dispatcher.py` is a Python library independent of any LLM provider.
 `dispatcher/gateway.py` adds a small Flask HTTP adapter. There is no Agent
-framework, model SDK, approval workflow, or idempotency implementation.
+framework or model SDK. The backend owns approval and idempotency enforcement.
 
 ### Start the gateway
 
@@ -210,8 +211,8 @@ after dispatcher prechecks.
 
 ### Registered tools
 
-All 22 business endpoints are registered; health and authentication
-context are infrastructure endpoints, not business tools.
+The registry contains 24 tools. Human approve/reject endpoints are intentionally
+not Agent tools; health and authentication context are infrastructure endpoints.
 
 | Area | Tool names |
 | --- | --- |
@@ -221,6 +222,7 @@ context are infrastructure endpoints, not business tools.
 | Customers | `customers_summary`, `customers_retention`, `customers_geo`, `list_customers` |
 | Analytics | `analytics_revenue`, `analytics_trend`, `analytics_refunds`, `analytics_category`, `analytics_aov` |
 | Administration | `change_user_role` |
+| Approvals | `get_approval`, `execute_approval` |
 
 Read tools require `business:read` and have LOW risk metadata. Refunds require
 `orders:refund`; price updates require `products:price`; both also require read
@@ -231,8 +233,8 @@ permission for prechecks and have DYNAMIC risk metadata. Role changes require
 
 Viewer is read-only. Operator can submit refunds and price changes. Manager adds
 manager-level approval authority, and Admin adds admin-level approval authority
-plus tenant-scoped role management. Approval authority is metadata for Phase 4;
-it never proves that an operation was approved. Admin cannot access another
+plus tenant-scoped role management. Approval authority never proves that an
+operation was approved. Admin cannot access another
 tenant's users or business resources.
 
 Refunds through ¥100 (10,000 cents) execute directly for Operator, Manager, or
@@ -241,11 +243,11 @@ refunds require Admin approval. Absolute price changes through 5% execute
 directly; changes over 5% through 20% require Manager/Admin approval; larger
 changes require Admin approval. Price percentages use exact integer comparisons.
 
-Because approval execution is not implemented yet, every approval-required
-operation fails closed with `APPROVAL_REQUIRED`, including requests initiated by
-Manager or Admin. Business state and amount constraints are checked first, so an
-approval requirement cannot make an invalid operation valid. The backend does
-not accept client-supplied approval claims.
+Every approval-required submission returns `APPROVAL_REQUIRED` with a persisted
+PENDING receipt, including submissions initiated by Manager or Admin. Business
+state and amount constraints are checked first. A separate authorized human must
+approve before the initiator can execute; the backend does not accept
+client-supplied approval claims on ordinary refund/price endpoints.
 
 ### Validation and observations
 
@@ -301,7 +303,7 @@ infrastructure error, invalid write response, or failed postcondition returns
 non-recoverable `WRITE_OUTCOME_UNKNOWN`. The caller must inspect persisted state
 and resolve the outcome manually before another write. Known business rejections
 retain their specific codes. Approval-required results are non-recoverable and
-do not implement approval processing.
+include the validated pending receipt in `error.approval`.
 
 `dispatcher/audit.py` records one durable `tool_executions` row per invocation,
 including validation/authentication failures. It stores the trace, registered
@@ -314,20 +316,90 @@ row/checkpoint remains pending and the response does not encourage retrying.
 The audit is not a deduplication mechanism or an atomic transaction spanning
 both services. Pending rows require manual investigation.
 
-### Phase 2 limitations
+### Operational limitations
 
 - Existing direct Flask routes remain accessible and independently authorized;
   Agent network restriction and Skill migration belong to later phases.
-- No approval execution, requester/approver workflow, idempotency, automatic
-  reconciliation, production identity provider, or LLM-specific integration is
-  implemented. Approval-required operations therefore fail closed.
-- Unknown write outcomes cannot be resolved automatically without the later
-  idempotency work. Never blindly retry a partial refund.
+- Production identity infrastructure, an approval UI, automatic reconciliation,
+  and LLM-specific integration are not implemented.
+- Unknown writes are never automatically retried. Inspect a persisted approval
+  with `get_approval`; explicitly resubmit keyed submissions only with the
+  original key and parameters. Unkeyed financial calls cannot be deduplicated.
 - Schemas intentionally constrain supported tool inputs more strictly than
   legacy Flask query parsing (for example, page sizes are capped at 100 and the
   existing daily revenue/monthly retention calculations expose only those periods).
 - Business and audit databases are separate. An unavailable audit store prevents
   new execution; an unavailable completion write can leave a pending audit row.
+
+## Phase 4: Approvals and idempotency
+
+HIGH refunds and price changes return HTTP 403 with `code: APPROVAL_REQUIRED`
+and an `approval` object. The Dispatcher exposes the same object under
+`error.approval`. It includes the approval ID, operation ID, exact normalized
+parameters, required approval level, digest, and expiry. Submission never applies
+the financial change. The original HTTP 403 code remains compatible with Phase 3.
+
+The lifecycle is PENDING → APPROVED → EXECUTING → COMPLETED, with REJECTED,
+EXPIRED, and FAILED terminal alternatives. A separate human credential and the
+current required role are necessary to approve/reject. Self-review and foreign
+tenant review are forbidden. API credentials cannot approve even when their user
+is an Admin. Keep human credentials outside the Agent environment.
+
+Provision reviewer users in the same tenant using trusted local administration;
+the seeded users remain Operators and are never automatically promoted. Configure
+distinct token-to-user maps on the backend, for example:
+
+```sh
+export API_TOKENS='{"private-agent-token":"user-a"}'
+export HUMAN_APPROVAL_TOKENS='{"private-review-token":"reviewer-user-id"}'
+```
+
+`reviewer-user-id` must be an existing active Manager/Admin in the database. Tokens
+must not overlap between maps. There are no built-in human passwords or tokens.
+
+| Endpoint | Caller | Behavior |
+| --- | --- | --- |
+| `GET /v1/approvals/{id}` | Initiator or same-tenant reviewer | Inspect and reconcile lifecycle/result |
+| `POST /v1/approvals/{id}/approve` | Authorized human reviewer | Persist approval without executing |
+| `POST /v1/approvals/{id}/reject` | Authorized human reviewer | Persist terminal rejection |
+| `POST /v1/approvals/{id}/execute` | Initiator | Revalidate and execute once, or replay stored result |
+
+POST action bodies are `{}`; they cannot replace approved parameters. Only GET
+inspection and POST execution are registered Dispatcher tools. Example review:
+
+```sh
+curl -s -X POST -H "Authorization: Bearer $HUMAN_APPROVAL_TOKEN" \
+  -H 'Content-Type: application/json' -d '{}' \
+  "http://localhost:8080/v1/approvals/$APPROVAL_ID/approve"
+```
+
+Canonical SHA-256 binding covers tenant, initiator, operation ID, operation,
+resource, parameters, approval level, and expiry. Price approvals also bind the
+starting price: any intervening price change requires a new approval. Current
+initiator permissions and reviewer authority are checked again at execution.
+Business-state changes and digest failures record FAILED with no financial effect.
+Expiry defaults to one hour (`APPROVAL_TTL_SECONDS` in app configuration, 1–86400);
+it is persisted on inspection or action, without a background scheduler.
+
+Keyed financial submissions atomically persist the original response. Repeating
+the same key/initiator/parameters returns that response, including the original
+pending receipt. To see subsequent approval changes, inspect the approval ID.
+Changed parameters or another initiator under the same tenant/key cause
+`IDEMPOTENCY_CONFLICT`. Keys are retained across restarts without automatic expiry.
+
+The approval ID is the execution idempotency key. SQLite `BEGIN IMMEDIATE`
+serializes concurrent decisions/executions. Business writes, completed results,
+and backend lifecycle audits commit together. EXECUTING is a transaction-local
+transition; a database failure rolls the approval back to APPROVED, and an explicit
+later execution can safely recover. A lost successful response leaves COMPLETED
+and its result available for inspection and replay. The Dispatcher never retries
+these writes automatically, including when it reports `WRITE_OUTCOME_UNKNOWN`.
+
+SQLite startup migration preserves existing data, adds approval/idempotency
+columns, and marks legacy unbound placeholder approvals FAILED. The exactly-once
+guarantee covers local SQLite financial effects; a future external payment
+provider will require its own idempotency/reconciliation protocol. Phase 5
+OpenClaw integration is not included.
 
 ## Tests
 

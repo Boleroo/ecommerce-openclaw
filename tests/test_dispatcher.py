@@ -65,13 +65,15 @@ def assert_failure(observation, code, recoverable=None):
 
 def test_registry_matches_every_business_route(app):
     original_business_routes = {
-        (method, rule.rule.replace("<order_id>", "{order_id}").replace("<sku>", "{sku}").replace("<user_id>", "{user_id}"))
+        (method, rule.rule.replace("<order_id>", "{order_id}").replace("<sku>", "{sku}").replace("<user_id>", "{user_id}").replace("<approval_id>", "{approval_id}"))
         for rule in app.url_map.iter_rules()
         if rule.rule.startswith("/v1/") and rule.rule != "/v1/auth/context"
+        and rule.endpoint not in ("approvals.approve", "approvals.reject")
         for method in rule.methods - {"HEAD", "OPTIONS"}
     }
     assert {(tool.method, tool.endpoint) for tool in REGISTRY.tools.values()} == original_business_routes
-    assert len(REGISTRY.tools) == 22
+    assert len(REGISTRY.tools) == 24
+    assert not any(tool.endpoint.endswith(("/approve", "/reject")) for tool in REGISTRY.tools.values())
     for description in REGISTRY.describe():
         assert description["required_permissions"]
         assert description["risk_level"] in ("LOW", "HIGH", "DYNAMIC")
@@ -107,6 +109,15 @@ def test_all_registered_tools_against_real_backend(dispatcher, audit, app, paid_
         with app.extensions["session_factory"].begin() as session:
             session.get(User, user_id).role = "admin"
         arguments.update(user_id=user_id, role="admin")
+    if name in ("get_approval", "execute_approval"):
+        reviewer = prefix + "reviewer"
+        app.config["HUMAN_APPROVAL_TOKENS"]["human-reviewer"] = reviewer
+        with app.extensions["session_factory"].begin() as session:
+            session.add(User(id=reviewer, tenant_id="merchant-67890" if prefix else "merchant-12345", name="Reviewer", role="admin"))
+        with app.test_client() as client:
+            pending = client.patch(f"/v1/products/{prefix}SHOE-WH-42/price", headers={"Authorization": f"Bearer {token}"}, json={"price": 10000}).get_json()["approval"]
+            assert client.post(f"/v1/approvals/{pending['id']}/approve", headers={"Authorization": "Bearer human-reviewer"}, json={}).status_code == 200
+        arguments["approval_id"] = pending["id"]
     observation = dispatcher.execute(name, arguments, token=token)
     assert observation.success, observation.model_dump()
     assert observation.error is None
@@ -118,7 +129,7 @@ def test_all_registered_tools_against_real_backend(dispatcher, audit, app, paid_
     assert record["success"] == 1
     assert record["tenant_id"] == ("merchant-67890" if prefix else "merchant-12345")
     assert record["user_id"] == ("user-b" if prefix else "user-a")
-    expected_requests = 2 if tool.method == "GET" or name == "change_user_role" else 3
+    expected_requests = 2 if tool.method == "GET" or name in ("change_user_role", "execute_approval") else 3
     assert len(record["requests"]) == expected_requests
     assert token not in json.dumps(record)
 
@@ -575,7 +586,7 @@ def test_concurrent_executions_keep_identity_and_trace_separate(dispatcher, audi
 def test_gateway_catalog_execution_and_trace(backend, audit, auth_a):
     gateway = create_gateway({"TESTING": True}, backend=backend, audit=audit).test_client()
     catalog = gateway.get("/tools").get_json()
-    assert len(catalog["tools"]) == 22
+    assert len(catalog["tools"]) == 24
     Draft202012Validator.check_schema(catalog["observation_schema"])
     response = gateway.post("/tools/execute", headers={**auth_a, "X-Request-ID": "forged", "X-Tenant-ID": "merchant-67890"},
                             json={"tool": "list_products", "arguments": {}})

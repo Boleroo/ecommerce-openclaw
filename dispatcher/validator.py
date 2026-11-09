@@ -1,6 +1,7 @@
 from pydantic import ValidationError
 
 from .observation import ERRORS, ToolFailure
+from .schemas import ApprovalOutput
 
 
 TRANSIENT_CODES = {"UPSTREAM_TIMEOUT", "UPSTREAM_UNAVAILABLE", "DATABASE_BUSY"}
@@ -9,6 +10,7 @@ WRITE_REJECTIONS = {
     "INVALID_ARGUMENT": 400, "PRICE_OUT_OF_RANGE": 400,
     "RESOURCE_NOT_FOUND": 404, "INVALID_BUSINESS_STATE": 409,
     "REFUND_AMOUNT_EXCEEDED": 409,
+    "IDEMPOTENCY_CONFLICT": 409, "APPROVAL_INVALID": 409, "APPROVAL_FAILED": 409,
 }
 AUTHORIZATION_CODES = {
     "PERMISSION_DENIED", "TENANT_ACCESS_DENIED", "APPROVAL_REQUIRED",
@@ -30,7 +32,15 @@ def validate_response(response, output_model, success_status=200, *, is_write=Fa
     if response.status_code == 401:
         raise ToolFailure("UNAUTHENTICATED")
     if response.status_code == 403:
-        raise ToolFailure(code if code in AUTHORIZATION_CODES else "PERMISSION_DENIED")
+        failure = ToolFailure(code if isinstance(code, str) and code in AUTHORIZATION_CODES else "PERMISSION_DENIED")
+        if code == "APPROVAL_REQUIRED" and isinstance(body, dict) and "approval" in body:
+            try:
+                failure.error.approval = ApprovalOutput.model_validate(body["approval"])
+                if failure.error.approval.status != "PENDING":
+                    raise ValueError("Expected pending approval")
+            except (ValidationError, ValueError):
+                raise ToolFailure("INVALID_BACKEND_RESPONSE") from None
+        raise failure
     if response.is_json and isinstance(body, dict):
         if isinstance(code, str) and code in ERRORS:
             if is_write and WRITE_REJECTIONS.get(code) != response.status_code:
@@ -54,6 +64,9 @@ def validate_response(response, output_model, success_status=200, *, is_write=Fa
 
 
 def validate_postconditions(tool, arguments, result, before=None):
+    if hasattr(arguments, "approval_id"):
+        if result.id != arguments.approval_id or (tool.name == "execute_approval" and result.status != "COMPLETED"):
+            raise ToolFailure("INVALID_BACKEND_RESPONSE")
     if hasattr(arguments, "order_id"):
         order = result.order if tool.name == "refund_order" else result
         if order.order_id != arguments.order_id:
@@ -109,9 +122,9 @@ def validate_postconditions(tool, arguments, result, before=None):
     if tool.name == "refund_order":
         if result.refund.order_id != arguments.order_id or result.refund.amount != arguments.amount or result.refund.reason != arguments.reason:
             raise ToolFailure("INVALID_BACKEND_RESPONSE")
-        if result.order.refunded_amount < before.refunded_amount + arguments.amount:
+        if before is not None and result.order.refunded_amount < before.refunded_amount + arguments.amount:
             raise ToolFailure("INVALID_BACKEND_RESPONSE")
-        for field in ("total_amount", "items", "customer_name", "created_at", "logistics"):
+        for field in (() if before is None else ("total_amount", "items", "customer_name", "created_at", "logistics")):
             if getattr(result.order, field) != getattr(before, field):
                 raise ToolFailure("INVALID_BACKEND_RESPONSE")
 

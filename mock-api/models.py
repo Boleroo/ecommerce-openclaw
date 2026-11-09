@@ -121,9 +121,25 @@ class ApprovalRequest(Base):
     initiator_id = Column(String, ForeignKey("users.id"), nullable=False)
     operation = Column(String, nullable=False)
     parameters = Column(JSON, nullable=False)
-    status = Column(String, nullable=False, default="pending")
+    status = Column(String, nullable=False, default="PENDING")
     created_at = Column(String, nullable=False, default=utc_now)
     expires_at = Column(String, nullable=True)
+    operation_id = Column(String, unique=True, nullable=True)
+    resource_id = Column(String, nullable=True)
+    request_digest = Column(String, nullable=True)
+    approval_level = Column(String, nullable=True)
+    approver_id = Column(String, ForeignKey("users.id"), nullable=True)
+    decided_at = Column(String, nullable=True)
+    result = Column(JSON, nullable=True)
+    failure_code = Column(String, nullable=True)
+
+    def to_dict(self):
+        return {field: getattr(self, field) for field in (
+            "id", "operation_id", "tenant_id", "initiator_id", "operation",
+            "resource_id", "parameters", "request_digest", "approval_level",
+            "status", "created_at", "expires_at", "approver_id", "decided_at",
+            "result", "failure_code",
+        )}
 
 
 class IdempotencyRecord(Base):
@@ -137,6 +153,9 @@ class IdempotencyRecord(Base):
     status = Column(String, nullable=False)
     response = Column(JSON, nullable=True)
     created_at = Column(String, nullable=False, default=utc_now)
+    operation_id = Column(String, nullable=True)
+    initiator_id = Column(String, nullable=True)
+    response_status = Column(Integer, nullable=True)
 
 
 class AuditLog(Base):

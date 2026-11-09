@@ -25,6 +25,7 @@ def init_database(app):
 
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
         user_columns = {
             row[1] for row in connection.exec_driver_sql("PRAGMA table_info(users)")
         }
@@ -32,5 +33,29 @@ def init_database(app):
             connection.exec_driver_sql(
                 "ALTER TABLE users ADD COLUMN role VARCHAR NOT NULL DEFAULT 'operator'"
             )
+        additions = {
+            "approval_requests": {
+                "operation_id": "VARCHAR", "resource_id": "VARCHAR",
+                "request_digest": "VARCHAR", "approval_level": "VARCHAR",
+                "approver_id": "VARCHAR REFERENCES users(id)", "decided_at": "VARCHAR",
+                "result": "JSON", "failure_code": "VARCHAR",
+            },
+            "idempotency_records": {
+                "operation_id": "VARCHAR", "initiator_id": "VARCHAR",
+                "response_status": "INTEGER",
+            },
+        }
+        for table, columns in additions.items():
+            existing = {row[1] for row in connection.exec_driver_sql(f"PRAGMA table_info({table})")}
+            for name, definition in columns.items():
+                if name not in existing:
+                    connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS approval_operation_id ON approval_requests(operation_id)"
+        )
+        connection.exec_driver_sql(
+            "UPDATE approval_requests SET status='FAILED', failure_code='APPROVAL_INVALID' "
+            "WHERE request_digest IS NULL"
+        )
     app.extensions["database"] = engine
     app.extensions["session_factory"] = sessionmaker(bind=engine, expire_on_commit=False)

@@ -30,9 +30,14 @@ def positive_integer(value, field, maximum=None):
 
 
 def body_fields(required, optional=()):
-    body = request.get_json(silent=True)
+    try:
+        body = request.get_json(silent=True)
+    except RecursionError:
+        body = None
     if not isinstance(body, dict) or set(body) - set(required) - set(optional) or set(required) - set(body):
         raise BusinessError("INVALID_ARGUMENT", f"Expected JSON fields: {', '.join(required)}")
+    if "idempotency_key" in body and body["idempotency_key"] is None:
+        raise BusinessError("INVALID_ARGUMENT", "Idempotency key cannot be null")
     return body
 
 
@@ -93,54 +98,63 @@ def refund_reasons(order_ids):
 
 @operations.post("/v1/orders/<order_id>/refund")
 def refund_order(order_id):
-    body = body_fields(("amount",), ("reason",))
+    from approvals import submit_operation
+
+    body = body_fields(("amount",), ("reason", "idempotency_key"))
     amount = positive_integer(body["amount"], "amount")
     reason = body.get("reason", "")
     if not isinstance(reason, str) or len(reason) > 500:
         raise BusinessError("INVALID_ARGUMENT", "reason must be a string of at most 500 characters")
-    require_permission("orders:refund")
-    with g.db.begin():
-        g.db.execute(text("BEGIN IMMEDIATE"))
-        order = g.db.get(Order, (g.tenant_id, order_id))
+    return submit_operation("refund_order", order_id, {"amount": amount, "reason": reason}, body.get("idempotency_key"))
+
+
+def validate_operation(operation, resource_id, parameters):
+    if operation == "refund_order":
+        amount = positive_integer(parameters["amount"], "amount")
+        order = g.db.get(Order, (g.tenant_id, resource_id))
         if order is None:
             raise BusinessError("RESOURCE_NOT_FOUND", "Order not found", 404)
         if order.status not in REFUNDABLE_STATUSES:
             raise BusinessError("INVALID_BUSINESS_STATE", "Order status does not permit refunds", 409)
         if amount > order.total_amount - order.refunded_amount:
             raise BusinessError("REFUND_AMOUNT_EXCEEDED", "Amount exceeds the remaining refundable amount", 409)
-        decision = classify_refund(amount)
-        if decision.approval_required:
-            raise BusinessError("APPROVAL_REQUIRED", decision.approval_message, 403)
-        order.refunded_amount += amount
+        return order, classify_refund(amount)
+    if operation != "change_price":
+        raise BusinessError("APPROVAL_INVALID", "Invalid approval operation", 409)
+    positive_integer(parameters["price"], "price", MAX_PRICE)
+    product = g.db.get(Product, (g.tenant_id, resource_id))
+    if product is None:
+        raise BusinessError("RESOURCE_NOT_FOUND", "Product not found", 404)
+    if "expected_price" in parameters and product.price != parameters["expected_price"]:
+        raise BusinessError("INVALID_BUSINESS_STATE", "Product price changed since approval was requested", 409)
+    return product, classify_price_change(product.price, parameters["price"])
+
+
+def apply_operation(operation, resource, parameters, initiator_id):
+    if operation == "refund_order":
+        order = resource
+        order.refunded_amount += parameters["amount"]
         if order.refunded_amount == order.total_amount:
             order.status = "refunded"
         refund = Refund(
-            id=str(uuid4()), tenant_id=g.tenant_id, order_id=order_id,
-            user_id=g.user_id, amount=amount, reason=reason,
+            id=str(uuid4()), tenant_id=g.tenant_id, order_id=order.order_id,
+            user_id=initiator_id, amount=parameters["amount"], reason=parameters["reason"],
         )
         g.db.add(refund)
         g.db.flush()
-        response = {"refund": refund.to_dict(), "order": order.to_dict()}
-    return jsonify(response), 201
+        return {"refund": refund.to_dict(), "order": order.to_dict()}, 201
+    previous_price = resource.price
+    resource.price = parameters["price"]
+    return {"product": resource.to_dict(), "previous_price": previous_price}, 200
 
 
 @operations.patch("/v1/products/<sku>/price")
 def change_price(sku):
-    body = body_fields(("price",))
+    from approvals import submit_operation
+
+    body = body_fields(("price",), ("idempotency_key",))
     price = positive_integer(body["price"], "price", MAX_PRICE)
-    require_permission("products:price")
-    with g.db.begin():
-        g.db.execute(text("BEGIN IMMEDIATE"))
-        product = g.db.get(Product, (g.tenant_id, sku))
-        if product is None:
-            raise BusinessError("RESOURCE_NOT_FOUND", "Product not found", 404)
-        previous_price = product.price
-        decision = classify_price_change(previous_price, price)
-        if decision.approval_required:
-            raise BusinessError("APPROVAL_REQUIRED", decision.approval_message, 403)
-        product.price = price
-        response = {"product": product.to_dict(), "previous_price": previous_price}
-    return jsonify(response)
+    return submit_operation("change_price", sku, {"price": price}, body.get("idempotency_key"))
 
 
 @operations.patch("/v1/users/<user_id>/role")

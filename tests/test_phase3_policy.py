@@ -157,10 +157,14 @@ def test_refund_thresholds_fail_closed_for_every_authorized_role(
         f"/v1/orders/{policy_order}/refund", headers=auth_a, json={"amount": amount},
     )
     assert response.status_code == 403
-    assert response.get_json() == {"code": "APPROVAL_REQUIRED", "message": approval_text}
+    approval = response.get_json()["approval"]
+    assert response.get_json() == {"code": "APPROVAL_REQUIRED", "message": approval_text, "approval": approval}
+    assert approval["status"] == "PENDING"
+    assert approval["parameters"] == {"amount": amount, "reason": ""}
     assert_policy_order_unchanged(app, policy_order)
     with app.extensions["session_factory"]() as session:
-        assert session.scalar(select(func.count()).select_from(ApprovalRequest)) == 0
+        assert session.scalar(select(func.count()).select_from(ApprovalRequest)) == 1
+        assert session.get(ApprovalRequest, approval["id"]).to_dict() == approval
 
 
 def test_refund_direct_boundary_is_inclusive(client, app, auth_a, policy_order):
@@ -187,10 +191,14 @@ def test_price_thresholds_use_exact_integer_arithmetic_and_fail_closed(
         "/v1/products/SHOE-WH-42/price", headers=auth_a, json={"price": new_price},
     )
     assert response.status_code == 403
-    assert response.get_json() == {"code": "APPROVAL_REQUIRED", "message": approval_text}
+    approval = response.get_json()["approval"]
+    assert response.get_json() == {"code": "APPROVAL_REQUIRED", "message": approval_text, "approval": approval}
+    assert approval["status"] == "PENDING"
+    assert approval["parameters"] == {"price": new_price, "expected_price": 29900}
     with app.extensions["session_factory"]() as session:
         assert session.get(Product, ("merchant-12345", "SHOE-WH-42")).price == 29900
-        assert session.scalar(select(func.count()).select_from(ApprovalRequest)) == 0
+        assert session.scalar(select(func.count()).select_from(ApprovalRequest)) == 1
+        assert session.get(ApprovalRequest, approval["id"]).to_dict() == approval
 
 
 @pytest.mark.parametrize("new_price", [28405, 31395])

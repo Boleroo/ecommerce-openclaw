@@ -2,7 +2,7 @@ from typing import Any, Literal
 
 from pydantic import model_validator
 
-from .schemas import Schema
+from .schemas import ApprovalOutput, Schema
 
 
 ErrorCode = Literal[
@@ -12,6 +12,7 @@ ErrorCode = Literal[
     "APPROVAL_REJECTED", "APPROVAL_EXPIRED", "UPSTREAM_TIMEOUT", "UPSTREAM_UNAVAILABLE",
     "DATABASE_BUSY", "INVALID_BACKEND_RESPONSE", "WRITE_OUTCOME_UNKNOWN",
     "AUDIT_UNAVAILABLE", "INTERNAL_ERROR",
+    "IDEMPOTENCY_CONFLICT", "APPROVAL_INVALID", "APPROVAL_FAILED",
 ]
 
 
@@ -21,6 +22,7 @@ class Error(Schema):
     message: str
     recoverable: bool
     retry_hint: str | None
+    approval: ApprovalOutput | None = None
 
 
 class Observation(Schema):
@@ -57,6 +59,9 @@ ERRORS = {
     "WRITE_OUTCOME_UNKNOWN": ("INFRASTRUCTURE", "The write may have executed; its outcome could not be verified", False, "Do not retry this write. Inspect persisted business state using the trace ID and resolve the outcome manually."),
     "AUDIT_UNAVAILABLE": ("INFRASTRUCTURE", "The execution audit could not be persisted", False, "Restore the audit store and inspect the trace before considering another execution."),
     "INTERNAL_ERROR": ("INFRASTRUCTURE", "Tool execution failed internally", False, "Investigate the trace before considering another execution."),
+    "IDEMPOTENCY_CONFLICT": ("BUSINESS", "Idempotency key is bound to a different request", False, "Inspect the original operation; do not change parameters under the same key."),
+    "APPROVAL_INVALID": ("AUTHORIZATION", "Approval binding or current policy is invalid", False, None),
+    "APPROVAL_FAILED": ("BUSINESS", "Approval execution failed validation", False, "Inspect the approval and current business state."),
 }
 
 

@@ -325,6 +325,10 @@ Risk classification and permission checks must happen in trusted backend code, n
 
 ## Phase 4 — Human-in-the-Loop Approval Flow
 
+Phase 4 supersedes the Phase 3 fail-closed placeholder: the same HIGH thresholds
+now persist a PENDING approval while continuing to prohibit immediate execution.
+The role matrix and integer-cent/percentage boundaries above remain unchanged.
+
 ### 4.1 Approval Workflow
 
 Expected flow:
@@ -368,13 +372,50 @@ Requirements:
 - Concurrent duplicate requests cannot execute twice.
 - Failed or timed-out requests must not cause duplicate refunds.
 
-### 4.4 OpenClaw Integration
+Implementation contract:
 
-Investigate the current OpenClaw approval/plugin interfaces available in the installed version.
+- Financial submission accepts an optional `idempotency_key` argument or
+  `Idempotency-Key` header. Keys are tenant-scoped and bound to initiator,
+  operation, resource, normalized parameters, and server operation ID. Conflicting
+  reuse returns `IDEMPOTENCY_CONFLICT`. Original unkeyed MEDIUM calls remain
+  compatible; callers must supply a stable key for submission deduplication.
+- A keyed submission atomically stores its original HTTP response, including a
+  pending approval receipt. Replays return that receipt; `get_approval` provides
+  the current lifecycle state and execution result.
+- Approval execution uses the approval ID itself as the stable execution key.
+  It accepts no replacement financial parameters. COMPLETED results are stored
+  and replayed verbatim even when current business state subsequently changes.
+- `BEGIN IMMEDIATE` serializes decisions/execution. Business effects, EXECUTING
+  and COMPLETED transitions, results, and lifecycle audit events share one
+  transaction. EXECUTING is not separately committed, so a process/database
+  failure cannot strand a partially committed financial operation.
+- Business, permission, digest, or policy invalidation produces FAILED with no
+  financial effect. Database transaction failures roll back to APPROVED, allowing
+  explicit recovery after state inspection. No write is automatically retried.
+- Requests expire after a server-configured lifetime (default one hour, maximum
+  one day). Expiration is checked and persisted on review, inspection, and
+  execution. Approving or repeating a request does not extend its lifetime.
+- Price approvals bind the original price as well as the target price. Any
+  intervening price change invalidates the approval and requires a new review.
 
-Use supported hooks when feasible, but treat the Dispatcher/Backend as the final security enforcement boundary.
+### 4.4 Standalone Human Review Boundary
 
-If native OpenClaw approval integration is unavailable, implement a standalone approval workflow first and document the difference accurately.
+The standalone backend provides GET `/v1/approvals/{id}` and POST actions
+`/approve`, `/reject`, and `/execute`. Decisions require separate server-configured
+human credentials (`HUMAN_APPROVAL_TOKENS`), the appropriate current Manager/Admin
+role, the same tenant, and a reviewer different from the initiator. API/Agent
+credentials cannot make approval decisions even if their database role is Admin.
+
+Only `get_approval` and `execute_approval` are exposed in the Agent Tool Registry.
+The initiator executes after review. The backend rechecks initiator permission,
+reviewer authority, digest, expiry, and current business constraints before any
+effect. Approved status and approval IDs supplied to ordinary financial routes
+have no authorization effect.
+
+Approval results and failures use the existing structured Observation format;
+`APPROVAL_REQUIRED` carries a validated `error.approval` receipt. Backend lifecycle
+audit entries include actor, tenant, operation ID, state, and trace correlation.
+OpenClaw integration and deployment credential separation belong to Phase 5.
 
 ### Acceptance Criteria
 

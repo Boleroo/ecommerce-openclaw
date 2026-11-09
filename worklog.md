@@ -695,3 +695,148 @@ and whitespace checks pass. JUnit output is `/tmp/ecommerce-phase3.xml`.
 
 No Phase 4 approval execution or idempotency code was added. No commit or push
 was performed.
+
+## Phase 4 — Human approval and persistent idempotency
+
+### Scope and architecture
+
+Implemented Phase 4 only, reusing the existing Flask authentication, RBAC,
+integer-cent risk policies, SQLAlchemy models, Dispatcher, and SQLite database.
+The preceding Phase 3 limitations are historical; approval and idempotency are
+now implemented as described here. No Phase 5/OpenClaw integration was added.
+
+- HIGH-risk refund and price submissions persist a PENDING approval instead of
+  executing. The existing HTTP 403 `APPROVAL_REQUIRED` response now contains a
+  validated approval descriptor. MEDIUM-risk operations continue to execute
+  directly for authorized users, with unchanged thresholds and business limits.
+- Added persistent PENDING, APPROVED, REJECTED, EXPIRED, EXECUTING, COMPLETED,
+  and FAILED states. Human approve/reject endpoints are deliberately absent
+  from the Tool Registry; only `get_approval` and `execute_approval` were added
+  to the Agent-facing tools (24 tools total).
+- Human decisions require separately configured `HUMAN_APPROVAL_TOKENS`,
+  disjoint from ordinary API credentials. Current Manager/Admin authority,
+  tenant membership, active user status, and initiator/reviewer inequality are
+  enforced by the backend, not caller-supplied flags or Dispatcher claims.
+  Ordinary API credentials cannot approve even when their user is an Admin.
+- A canonical SHA-256 digest binds operation ID, tenant, initiator, operation,
+  resource, normalized parameters, approval level, and expiration. Price
+  approvals additionally bind the original price. Action bodies cannot replace
+  parameters. Tampered bindings fail closed.
+- Only the initiator can execute; execution revalidates their permission,
+  reviewer authority, risk policy, and current business state. Business or
+  permission invalidation records FAILED without financial effects. A changed
+  product price requires a new request rather than silently approving a
+  different percentage change.
+- SQLite `BEGIN IMMEDIATE` serializes lifecycle decisions and financial writes.
+  EXECUTING, the business mutation, COMPLETED/result, and business audit events
+  share one transaction. EXECUTING is not independently committed: a database
+  failure rolls back to APPROVED, allowing explicit recovery without a partial
+  refund. Failure diagnostics retain the existing sanitized backend errors;
+  an infrastructure-failure audit event is attempted after rollback.
+- Optional body `idempotency_key` or `Idempotency-Key` header binds a tenant-wide
+  key to the authenticated initiator and exact normalized submission. A unique
+  record stores the original response/status atomically with its effect or
+  pending approval. Reuse for a different request returns IDEMPOTENCY_CONFLICT.
+  Completed approval IDs independently provide execution deduplication.
+- Submission replays deliberately return the original receipt, including an
+  original PENDING/403 receipt; GET approval returns current lifecycle state.
+  Keyed Dispatcher submissions skip advisory business preflight so replaying a
+  completed full refund is not rejected merely because its order is now fully
+  refunded. Backend authorization and validation remain authoritative.
+- No automatic write retries were introduced. Lost or malformed write responses
+  remain nonrecoverable WRITE_OUTCOME_UNKNOWN. Callers can inspect approval
+  state or explicitly repeat the identical keyed submission/execution safely.
+- Lifecycle events and successful financial effects include authenticated
+  actor/tenant, operation IDs, state/digest where applicable, and trace IDs in
+  the business audit. Invalid lifecycle bodies and denied access are audited
+  without raw credentials. Dispatcher invocation auditing remains separate.
+- Existing SQLite databases receive additive approval/idempotency columns and
+  the operation-ID unique index. Legacy placeholder approvals lacking a bound
+  digest become FAILED rather than being executable.
+
+### Files
+
+Created `mock-api/approvals.py` and `tests/test_phase4_approvals.py`.
+
+Modified `mock-api/app.py`, `mock-api/business.py`, `mock-api/database.py`,
+`mock-api/models.py`, `dispatcher/dispatcher.py`, `dispatcher/gateway.py`,
+`dispatcher/observation.py`, `dispatcher/registry.py`, `dispatcher/schemas.py`,
+`dispatcher/validator.py`, `tests/test_dispatcher.py`,
+`tests/test_phase3_policy.py`, `README.md`, `plan.md`, and this worklog.
+
+The implementation plan now specifies the Phase 4 transaction, digest, human
+credential, expiry, and replay contracts; OpenClaw wiring remains Phase 5.
+Pre-existing untracked `.gitignore` and `.python-version` were left untouched.
+
+### Verification and encountered integration mismatches
+
+The initial full run reported 398 passed / 21 failed: existing registry tests
+expected 22 tools and lacked arguments/setup for the two new tools, while
+Phase 3 tests expected approval-required responses with no persistent approval.
+Updated these obsolete Phase 3 expectations to the Phase 4 contract without
+removing security or financial-state assertions: tests still verify 403,
+APPROVAL_REQUIRED, unchanged business state, and exact threshold decisions,
+and now additionally verify the PENDING descriptor and matching database row.
+Human-only decision routes are explicitly excluded from Agent tool coverage;
+new-tool integration tests use actual human approval through the backend.
+
+Added 80 focused Phase 4 tests, plus four cases in the existing all-tools
+integration matrix. Real temporary SQLite databases and Flask/Dispatcher paths
+cover:
+
+- Refund/price threshold approvals, independent reviewers, successful execution,
+  terminal replay, and ordered lifecycle audit events with operation/trace IDs.
+- Reject and expiry paths, self-approval, insufficient authority, ordinary API
+  credentials, cross-tenant attempts, and unrelated-user access with database
+  state checked after denials.
+- Digest tampering, modified operation bodies, canonical digest calculation,
+  and malformed or conflicting idempotency keys.
+- Business changes before approval/execution, exhausted balances, changed
+  prices, revoked initiator/reviewer permissions, and inactive reviewers.
+- Concurrent submissions, pending deduplication, approvals, competing
+  approve/reject decisions, multiple reviewers, and execution; one financial
+  effect is asserted, not merely HTTP success.
+- Lost submission/execution responses after real backend commits, safe explicit
+  replay/reconciliation, malformed pending receipts, and no write auto-retries.
+- Injected SQLite transaction/audit failures proving business and receipt
+  rollback, subsequent explicit recovery, process recreation persistence, and
+  legacy placeholder migration.
+- Existing low-risk operations and all prior regressions, including the
+  independent audit tests and Phase 3 tenant/RBAC/threshold checks.
+
+Final verification:
+
+```sh
+mock-api/venv/bin/python -m pytest -q --tb=short --junitxml=/tmp/ecommerce-phase4.xml
+mock-api/venv/bin/python -m compileall -q dispatcher mock-api tests
+git diff --check
+```
+
+Result: **499 passed, 0 failed, 0 errors, 0 skipped** (16.31 seconds): the
+previous 415 cases plus 84 new cases. Compilation and whitespace checks pass.
+JUnit output: `/tmp/ecommerce-phase4.xml`. No tests were deleted, skipped,
+marked expected-failure, or relaxed to ignore financial/security failures.
+
+### Remaining limitations and operational requirements
+
+- Reviewers must be provisioned and separate human secrets kept out of Agent
+  access. This mock uses configured bearer credentials, not a production human
+  identity provider or approval UI. Seeded users are not automatically promoted.
+- Idempotency is guaranteed for keyed submissions and approved execution IDs.
+  Legacy unkeyed direct operations remain independent requests; callers must
+  retain a stable key to safely replay an ambiguous direct write.
+- Exactly-once effects cover this local SQLite transaction only. A future
+  external payment provider needs its own idempotency/reconciliation protocol.
+- Expiration is lazy on lifecycle access/action, with a configurable 1–86,400
+  second TTL (default one hour); no background expiry worker was added.
+- Original submission receipts do not change after approval completion; clients
+  must query approval status. No automatic write retry or reconciliation worker
+  was added.
+- Database unavailability can also prevent writing a failure audit event;
+  internal exception logs remain the fallback. Business and Dispatcher audit
+  stores are separate transactions. No statement/branch coverage percentage
+  was generated.
+- Existing minimal role administration and its lack of a last-Admin safeguard
+  are unchanged. Phase 5 integration remains intentionally unimplemented.
+
+No commit or push was performed.

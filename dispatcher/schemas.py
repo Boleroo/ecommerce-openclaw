@@ -132,10 +132,12 @@ class TrendInput(DaysInput):
 class RefundInput(OrderInput):
     amount: Positive
     reason: Annotated[str, Field(max_length=500)] = ""
+    idempotency_key: Identifier | None = None
 
 
 class PriceInput(ProductInput):
     price: Price
+    idempotency_key: Identifier | None = None
 
 
 class RoleInput(Schema):
@@ -437,3 +439,54 @@ class PriceResult(Schema):
 class RoleResult(Schema):
     user_id: Identifier
     role: UserRole
+
+
+class ApprovalInput(Schema):
+    approval_id: Identifier
+
+
+class RefundParameters(Schema):
+    amount: Positive
+    reason: Annotated[str, Field(max_length=500)]
+
+
+class PriceParameters(Schema):
+    price: Price
+    expected_price: Price
+
+
+class ApprovalOutput(Schema):
+    id: Identifier
+    operation_id: Identifier
+    tenant_id: Identifier
+    initiator_id: Identifier
+    operation: Literal["refund_order", "change_price"]
+    resource_id: Identifier
+    parameters: RefundParameters | PriceParameters
+    request_digest: Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
+    approval_level: Literal["manager", "admin"]
+    status: Literal["PENDING", "APPROVED", "REJECTED", "EXPIRED", "EXECUTING", "COMPLETED", "FAILED"]
+    created_at: Timestamp
+    expires_at: Timestamp
+    approver_id: Identifier | None
+    decided_at: Timestamp | None
+    result: RefundResult | PriceResult | None
+    failure_code: str | None
+
+    @model_validator(mode="after")
+    def consistent_approval(self):
+        if (self.operation == "refund_order") != isinstance(self.parameters, RefundParameters):
+            raise ValueError("Approval parameters do not match operation")
+        if self.status in ("APPROVED", "EXECUTING", "COMPLETED") and (
+            not self.approver_id or self.approver_id == self.initiator_id or not self.decided_at
+        ):
+            raise ValueError("Approval requires an independent reviewer")
+        if (self.status == "COMPLETED") != (self.result is not None):
+            raise ValueError("Completed approval must have a result")
+        if self.result is not None:
+            if self.operation == "refund_order":
+                if not isinstance(self.result, RefundResult) or self.result.refund.order_id != self.resource_id or self.result.order.order_id != self.resource_id or self.result.refund.amount != self.parameters.amount or self.result.refund.reason != self.parameters.reason:
+                    raise ValueError("Refund result does not match approved parameters")
+            elif not isinstance(self.result, PriceResult) or self.result.product.sku != self.resource_id or self.result.product.price != self.parameters.price or self.result.previous_price != self.parameters.expected_price:
+                raise ValueError("Price result does not match approved parameters")
+        return self

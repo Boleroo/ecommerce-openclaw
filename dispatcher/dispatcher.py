@@ -89,7 +89,7 @@ class Dispatcher:
                 self._log_exception(state, "write_validation", failure)
             observation = self._failure(tool_name, state, code)
         except ToolFailure as failure:
-            observation = self._failure(tool_name, state, failure.error.code)
+            observation = Observation(success=False, tool=tool_name, error=failure.error, data=None, trace_id=state.trace_id)
         except Exception as failure:
             self._log_exception(state, "dispatch", failure)
             observation = self._failure(tool_name, state, "WRITE_OUTCOME_UNKNOWN" if state.write_attempted else "INTERNAL_ERROR")
@@ -105,6 +105,8 @@ class Dispatcher:
         return Observation(success=False, tool=tool_name, error=make_error(code), data=None, trace_id=state.trace_id)
 
     def _preflight(self, tool, arguments, token, state):
+        if getattr(arguments, "idempotency_key", None) is not None:
+            return None
         if tool.name == "refund_order":
             read_tool = self.registry.get("get_order")
             read_arguments = read_tool.input_model(order_id=arguments.order_id)
@@ -127,12 +129,24 @@ class Dispatcher:
         values = arguments.model_dump(mode="json", exclude_none=True)
         path_values = {name: values.pop(name) for name in tool.path_fields}
         endpoint = tool.endpoint.format(**path_values)
-        return self._request(
-            state, tool.method, endpoint, tool.output_model, token=token,
-            params=values if tool.method == "GET" else None,
-            json_body=values if tool.method != "GET" else None,
-            success_status=tool.success_status,
-        )
+        try:
+            result = self._request(
+                state, tool.method, endpoint, tool.output_model, token=token,
+                params=values if tool.method == "GET" else None,
+                json_body=values if tool.method != "GET" else None,
+                success_status=tool.success_status,
+            )
+        except ToolFailure as failure:
+            approval = failure.error.approval
+            if approval is not None:
+                expected = arguments.model_dump(exclude={"idempotency_key", *tool.path_fields})
+                actual = approval.parameters.model_dump(exclude={"expected_price"})
+                if approval.operation != tool.name or approval.tenant_id != state.identity.tenant_id or approval.initiator_id != state.identity.user_id or approval.resource_id not in path_values.values() or actual != expected:
+                    raise ToolFailure("WRITE_OUTCOME_UNKNOWN") from None
+            raise
+        if hasattr(result, "approval_level") and result.tenant_id != state.identity.tenant_id:
+            raise ToolFailure("WRITE_OUTCOME_UNKNOWN" if tool.method != "GET" else "INVALID_BACKEND_RESPONSE")
+        return result
 
     def _request(self, state, method, endpoint, output_model, *, token, params=None, json_body=None, success_status=200):
         while True:

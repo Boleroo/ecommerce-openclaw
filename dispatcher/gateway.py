@@ -38,6 +38,7 @@ def create_app(config=None, *, backend=None, audit=None):
                 "APPROVAL_REQUIRED": 403, "APPROVAL_REJECTED": 403, "APPROVAL_EXPIRED": 403,
                 "INVALID_BACKEND_RESPONSE": 502, "WRITE_OUTCOME_UNKNOWN": 502,
                 "INTERNAL_ERROR": 500,
+                "IDEMPOTENCY_CONFLICT": 409, "APPROVAL_INVALID": 409, "APPROVAL_FAILED": 409,
             }.get(code, 503)
         response = jsonify(observation.model_dump(mode="json"))
         response.headers["X-Request-ID"] = observation.trace_id
