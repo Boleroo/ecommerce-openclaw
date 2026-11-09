@@ -1,0 +1,56 @@
+{
+  "id": "ecommerce-dispatcher",
+  "name": "E-commerce Controlled Dispatcher",
+  "description": "Typed e-commerce tools routed through the authenticated controlled Dispatcher.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "list_orders",
+      "get_order",
+      "order_stats",
+      "list_products",
+      "product_ranking",
+      "product_stats",
+      "inventory_summary",
+      "inventory_alerts",
+      "inventory_sku",
+      "restock_suggestions",
+      "customers_summary",
+      "customers_retention",
+      "customers_geo",
+      "list_customers",
+      "analytics_revenue",
+      "analytics_trend",
+      "analytics_refunds",
+      "analytics_category",
+      "analytics_aov",
+      "refund_order",
+      "change_price",
+      "change_user_role",
+      "get_approval",
+      "execute_approval"
+    ]
+  },
+  "toolMetadata": {
+    "refund_order": {
+      "optional": true
+    },
+    "change_price": {
+      "optional": true
+    },
+    "change_user_role": {
+      "optional": true
+    },
+    "execute_approval": {
+      "optional": true
+    }
+  }
+}

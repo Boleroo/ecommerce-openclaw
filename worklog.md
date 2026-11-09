@@ -1,5 +1,261 @@
 # Implementation worklog
 
+## 2026-11-09 — Phase 5 local integration acceptance
+
+### Scope and isolation
+
+Performed the pre-Phase-6 local acceptance test only. No Phase 6 code, LLM
+request, billing/model change, commit, or push was made. Created an isolated
+temporary OpenClaw profile under `/tmp/ecommerce-openclaw-acceptance.zNkSM6`
+using `OPENCLAW_STATE_DIR` and `OPENCLAW_CONFIG_PATH`; the repository secure
+configuration example was copied into that profile. The existing
+`~/.openclaw/openclaw.json` was not overwritten or edited. All three local
+services were stopped and the disposable profile and test databases were
+removed after verification.
+
+OpenClaw 2026.7.1 installed and runtime-loaded the plugin from the isolated
+state. `openclaw plugins inspect ecommerce-dispatcher --runtime --json`
+reported `loaded`, `imported: true`, 24 tools, no diagnostics, no HTTP routes,
+and an empty plugin config schema. `tools.effective` was queried against an
+empty session created without a message or model run. Its Agent-visible surface
+contained exactly the 24 Dispatcher tools plus the built-in `session_status`;
+exec/shell, filesystem, web, browser, nodes, Gateway, human approve, and human
+reject tools were absent.
+
+### Live service acceptance
+
+Started a real Flask backend on loopback with an isolated SQLite business
+database, a real Dispatcher HTTP Gateway with an isolated audit database, and
+an OpenClaw Gateway on loopback with token authentication. Used only direct
+Gateway `tools.invoke` RPCs; no prompt was sent and no model provider was
+called.
+
+Verified the complete OpenClaw Plugin -> Dispatcher -> Flask -> SQLite path for
+order, product, and inventory reads. Successful and failed results retained the
+structured Observation body and trace ID. An extra tenant parameter was rejected
+as `INVALID_ARGUMENT`, and missing/foreign resources returned the tenant-safe
+`RESOURCE_NOT_FOUND` response with recovery guidance. Restarting the isolated
+Gateway with a second tenant's runtime credential and requesting the first
+tenant's order confirmed cross-tenant non-disclosure.
+
+Submitted a high-risk refund through OpenClaw. It returned
+`APPROVAL_REQUIRED` and a pending receipt. Direct approval with the Agent
+credential was denied with `PERMISSION_DENIED`; approval succeeded only through
+the backend human-approval endpoint using a separate test-only human credential.
+The initiating Agent then executed the approved request through
+`execute_approval`. A repeated execution returned the same completed result,
+and replaying the original refund with the same idempotency key returned the
+same approval identity. SQLite contained exactly one refund and one matching
+idempotency record for this acceptance operation.
+
+The Agent process was launched with only its Dispatcher credential. No human
+approval credential was placed in the OpenClaw environment, plugin config,
+tool schemas, calls, logs, or results. The plugin exposes approval inspection
+and initiator execution but not approve/reject decisions.
+
+### Unknown outcomes and bypass review
+
+The live keyed replay verified duplicate suppression after a completed write.
+Deterministic fault-injection tests for lost submission responses, lost
+post-commit execution responses, and modified/ambiguous pending responses also
+passed (4 focused cases). These tests verify `WRITE_OUTCOME_UNKNOWN`, explicit
+reconciliation/replay behavior, and no automatic write retry. A real TCP packet
+loss event was not manufactured during the live Gateway run.
+
+OpenClaw's model-effective inventory showed no practical supported route for
+the Agent to call Flask directly. Operator-authenticated `tools.invoke` is a
+separate administrative RPC and is not in the model's tool inventory. Direct
+operator probes for exec, web, browser, and Gateway tools were unavailable;
+the minimal policy logs also showed runtime, filesystem, web, UI, node, and
+Gateway tools being removed. Complete host-level network isolation is still not
+claimed: a malicious/modified runtime, an operator with Gateway credentials, a
+newly trusted native plugin, or another host process can reach loopback unless
+OS/container firewall controls are added. Backend authentication and
+authorization therefore remain the final boundary.
+
+### Verification results
+
+- OpenClaw runtime plugin inspection: **24 tools, loaded, 0 diagnostics**.
+- Model-effective inventory: **24 Dispatcher tools + `session_status`**, with
+  no direct-backend or human decision tool.
+- `npm run plugin:check`: passed; generated metadata is current.
+- `npm test`: **9 passed**.
+- Dedicated `tests/test_phase5_openclaw.py`: **10 passed**.
+- Focused ambiguous-write/idempotency tests: **4 passed**.
+- Complete Phase 1-5 Python regression suite: **530 passed** in 17.80 seconds.
+- No external LLM API was called. Actual model tool choice, natural-language
+  extraction/reasoning, and Observation-driven self-correction remain
+  unverified as intended.
+
+### Issues found
+
+1. The secure configuration example does not set `plugins.allow`. OpenClaw
+   warns that discovered non-bundled plugins may auto-load. The tested plugin
+   was explicitly enabled and tool policy still restricted the Agent surface,
+   but production configuration should explicitly allow only
+   `ecommerce-dispatcher`.
+2. The secure configuration example does not disable mDNS discovery. The first
+   loopback run advertised the Gateway through Bonjour. Acceptance reruns used
+   `OPENCLAW_DISABLE_BONJOUR=1`; production should also set discovery off in
+   configuration. Token authentication still protected the tested Gateway.
+3. `OPENCLAW_STATE_DIR` does not provide complete home-directory isolation in
+   OpenClaw 2026.7.1. Startup attempted a legacy migration from the default
+   `~/.openclaw/exec-approvals.json`, copied that data into the temporary state,
+   and unsuccessfully attempted to archive the source. Runtime inspection also
+   resolved the default workspace as `~/.openclaw/workspace`. No Agent/model run
+   or filesystem tool was allowed, and the global config was not modified, but
+   a disposable OS user or isolated `HOME` is recommended for stronger runtime
+   isolation.
+4. One metadata check was initially run without the temporary state variables.
+   It attempted OpenClaw health-state writes in the default state, but the
+   workspace sandbox rejected them as read-only. The check was rerun against
+   the isolated profile and passed. No global OpenClaw configuration change was
+   made.
+
+These are defense-in-depth/runtime-isolation findings, not a demonstrated
+Dispatcher, tenant, RBAC, approval, or idempotency bypass. Phase 6 remains
+unstarted.
+
+## 2026-11-09 — Phase 5: OpenClaw integration
+
+### Scope and selected mechanism
+
+Implemented Phase 5 only. Inspected the repository, Dispatcher HTTP Gateway,
+four existing Skills, OpenClaw 2026.7.1 CLI and installed SDK documentation,
+plugin schemas, tool-policy/sandbox controls, and the Phase 4 security audit
+before changing production files. The Phase 4 audit had no unresolved Critical
+or High application-security finding. Its confirmed Medium operational limitation
+was duplicate exposure for unkeyed low-risk writes.
+
+OpenClaw 2026.7.1 natively supports TypeScript `defineToolPlugin` entries with
+TypeBox schemas, generated manifests, validation, optional tools, and runtime
+inspection. Selected a thin native Tool Plugin rather than a CLI/HTTP fallback.
+No Agent framework or LLM provider was added or replaced.
+
+### Implementation
+
+- Added `openclaw-plugin/`, a TypeScript ESM package. It registers all current
+  24 Dispatcher entries: the 22 Phase 3 business tools plus Phase 4 approval
+  inspection/execution. Human approve/reject endpoints are not registered.
+  POST/PATCH tools are optional and need explicit OpenClaw allowlisting.
+- Added `scripts/generate_openclaw_tools.py`. It imports the Python Tool Registry
+  and generates `src/registry.generated.ts`, preserving names, descriptions,
+  parameters, constraints, and optional-write metadata without a second manual
+  schema source. Agent-facing refund/price schemas deliberately require the
+  existing `idempotency_key` parameter to close the Phase 4 unkeyed retry gap;
+  backend compatibility is unchanged.
+- The adapter accepts a credential only from
+  `OPENCLAW_ECOMMERCE_API_TOKEN`, outside tool arguments. It accepts only a
+  credential-free loopback Dispatcher origin, uses a 1–60000 ms bounded timeout,
+  forbids redirects, performs exactly one HTTP request per invocation, validates
+  Observation structure and header/body trace consistency, and preserves
+  Dispatcher codes, categories, messages, recoverability, retry hints, approval
+  receipts, data, and trace IDs. It never retries reads or writes.
+- Runtime configuration and network failures produce safe structured errors.
+  Missing credentials fail before any request. Tokens are present only in the
+  Authorization header and are never returned or included in the request body.
+- Added `config/openclaw-secure-agent.example.json`. It uses the minimal profile,
+  permits the plugin, enables sandbox mode, and denies runtime/exec, filesystem,
+  web, UI/browser, node, and Gateway tool surfaces. OpenClaw config validation
+  accepts the file.
+- Replaced direct `curl` Skill recipes in all four `skills/platform/*/SKILL.md`
+  files with native tool selection/argument guidance and explicit handling for
+  validation failures, approval-required outcomes, unknown writes, and permission
+  denials. Removed obsolete `curl`, `jq`, and `JD_API_ENDPOINT` requirements.
+- Reworked `start.sh` to start backend, Dispatcher, and OpenClaw with explicit
+  per-process environments. The previous launcher exported the complete `.env`
+  to OpenClaw, which would have leaked `HUMAN_APPROVAL_TOKENS` and backend token
+  maps into the Agent runtime. The new launcher explicitly removes those values
+  before starting OpenClaw. Added `.env.example` with placeholders.
+- Updated README architecture, installation, registration, startup, credentials,
+  examples, local tests, verified/unverified status, and network-isolation limits.
+
+### Dedicated Phase 5 tests
+
+Added TypeScript/Vitest coverage for registration metadata, trusted credential
+forwarding, Observation preservation, malformed responses, trace mismatch,
+timeouts, missing credentials, and the one-request invariant for
+`WRITE_OUTCOME_UNKNOWN`.
+
+Added `tests/test_phase5_openclaw.py` and a small Node invocation harness. The
+tests compile the real adapter, start the real Dispatcher and Flask backend on
+ephemeral loopback ports, use real SQLite, and directly invoke the TypeScript
+adapter without an LLM. Coverage includes:
+
+- generated schema validity and exact registry/manifest registration;
+- order, product, and inventory read-only proof-of-concept calls;
+- invalid arguments, missing resources, structured errors, and trace IDs;
+- runtime token identity propagation, Viewer denial, and cross-tenant denial;
+- HIGH-risk refund approval creation, Agent inability to approve, separate human
+  approval, initiator execution, keyed replay, and one persisted refund;
+- backend unavailability and absence of direct backend calls in supported Skill
+  and launcher surfaces.
+
+Invalid backend response and adapter timeout paths are exercised with local
+fetch stubs; existing Dispatcher regression tests continue to exercise real
+backend response-contract failures, backend timeouts, unknown writes, and audit
+behavior.
+
+### Verification results
+
+- `npm run plugin:check`: passed; generated OpenClaw metadata is current.
+- `npm test`: **9 passed** after the final adapter unit-test update.
+- `npm audit --omit=dev`: **0 production vulnerabilities**.
+- `npm pack --dry-run --cache /tmp/ecommerce-openclaw-npm-cache`: passed;
+  packaged output contains built JS, declarations, manifest, package metadata,
+  and plugin README.
+- `openclaw plugins validate`: `Plugin ecommerce-dispatcher is valid.`
+- Isolated temporary-state `openclaw plugins install` followed by
+  `openclaw plugins inspect ecommerce-dispatcher --runtime --json`: status
+  `loaded`, `imported: true`, all 24 tool names present, no diagnostics. This is
+  real local runtime loading without an LLM call or global config modification.
+- `openclaw skills check`: all four platform Skills are eligible and visible.
+- `openclaw config validate` on the secure example: passed.
+- Dedicated Phase 5 Python suite contains **10 collected cases** (including the
+  three read-only POC parameterizations); all pass within the complete run.
+- Final full Phase 1–5 Python regression suite: **530 passed, 0 failed, 0 errors,
+  0 skipped** in 17.32 seconds. JUnit output is
+  `/tmp/ecommerce-phase5-final.xml`.
+- Python compilation, `bash -n start.sh`, and `git diff --check`: passed.
+
+### Encountered errors and resolutions
+
+- The first generator call used system Python and failed first because the repo
+  root was absent from `sys.path`, then because system Python lacked Pydantic.
+  The generator now inserts the repository root and package scripts use the
+  existing project virtualenv explicitly.
+- Sandbox DNS blocked the first npm install. The approved dependency-install
+  retry completed. The installed dev tree reported advisories inherited through
+  the OpenClaw development dependency; the production-only audit reports zero.
+  No automatic `npm audit fix` or forced dependency rewrite was performed.
+- The sandbox forbade loopback socket binding. The unchanged integration tests
+  passed when rerun with explicit local-socket permission; no tests were skipped
+  or weakened.
+- OpenClaw CLI metadata checks attempted health-state writes to the read-only
+  default state and emitted unrelated existing Telegram/legacy-state warnings.
+  Runtime install/inspection used `/tmp/ecommerce-openclaw-phase5.LV6hRX` and did
+  not modify `~/.openclaw/openclaw.json`.
+- `npm pack --dry-run` initially hit pre-existing root-owned entries in the user
+  npm cache. It passed with an isolated `/tmp` cache; no ownership or global npm
+  state was changed.
+
+### Security limitations and deferred verification
+
+The tested OpenClaw policy removes supported exec/web/browser routes to Flask,
+and the native plugin itself can contact only a loopback Dispatcher origin.
+Complete host network isolation is not claimed: other host processes, a modified
+OpenClaw runtime, additional native plugins, or operator policy changes can still
+reach local ports. A production deployment should add container/network firewall
+rules. Backend authentication, tenant scoping, RBAC, risk policy, approval, and
+idempotency remain mandatory final enforcement boundaries.
+
+No DashScope or OpenAI LLM API was called; no credits, billing, model fallback,
+or global OpenClaw configuration was changed. Tool registration, adapter behavior,
+Dispatcher/backend/SQLite execution, authorization, approval, and idempotency are
+verified. Actual model tool choice, natural-language parameter extraction, Agent
+reasoning, and Observation-based self-correction remain unverified until model
+access is restored. Phase 6 was not started. No commit or push was performed.
+
 ## 2026-11-08 — Phase 2: Controlled Tool Dispatcher
 
 ### Scope and completion report

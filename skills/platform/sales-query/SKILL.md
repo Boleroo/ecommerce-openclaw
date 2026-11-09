@@ -1,117 +1,31 @@
 ---
 name: sales-query
 description: 查询店铺销售数据：订单列表、订单详情、销售额、退货率、销售趋势。
-metadata:
-  openclaw:
-    emoji: "💰"
-    requires: 
-      bins: ["curl", "jq"]
-      env: ["JD_API_ENDPOINT"]
+metadata: { "openclaw": { "emoji": "💰" } }
 ---
 
 # 销售查询 (Sales Query)
 
-查询 $JD_SHOP_NAME 的销售运营数据。所有金额单位为**分**，展示给用户时需除以 100 转为元。
+仅使用已注册的受控 Dispatcher 工具，不得使用 `exec`、shell、`curl`、浏览器或直接 HTTP 请求业务后端。身份和租户由可信运行时凭证确定，绝不能把 token、`tenant_id`、`user_id` 或角色放入工具参数。
 
-## 今日销售概况
+## 工具选择
 
-```bash
-curl -s "$JD_API_ENDPOINT/v1/orders/stats" | jq '{
-  date: .period.start,
-  total_orders: .total_orders,
-  total_amount_yuan: (.total_amount / 100),
-  by_status: .by_status,
-  vs_yesterday: .compared_to_yesterday
-}'
-```
+- 销售概况：`order_stats`，可选 `start_date`、`end_date`（`YYYY-MM-DD`）。
+- 最近或筛选订单：`list_orders`，使用 `status`、`keyword`、日期、分页和排序参数。
+- 单个订单：`get_order`，必填 `order_id`。
+- 今日营收比较：`analytics_revenue`，`period` 只能为 `daily`。
+- 趋势：`analytics_trend`，`days` 为 1–366，`metric` 为 `revenue`、`orders` 或 `customers`。
+- 退款分析：`analytics_refunds`，`period` 为 `today`、`week` 或 `month`。
+- 用户明确要求退款时：先用 `get_order` 核对状态和可退余额，再调用可选工具 `refund_order`。必填 `order_id`、正整数分值 `amount` 和稳定的 `idempotency_key`；可选 `reason`。不得自行改变金额或为同一未知结果生成新 key。
 
-## 指定日期范围的销售
+## 结构化 Observation
 
-```bash
-curl -s "$JD_API_ENDPOINT/v1/orders/stats?start_date=2026-02-01&end_date=2026-02-14" | jq '{
-  period: .period,
-  total_orders: .total_orders,
-  total_amount_yuan: (.total_amount / 100)
-}'
-```
+先检查 `success`。成功时只使用 `data`；失败时报告 `error.code`、安全的 `message` 和 `trace_id`。
 
-## 营收分析（今日 vs 昨日）
+- `INVALID_ARGUMENT`：根据 `retry_hint` 和工具 schema 修正参数；不要猜订单号或金额。
+- `RESOURCE_NOT_FOUND`：可用授权列表工具确认标识符；不得更改或伪造租户身份。
+- `PERMISSION_DENIED` / `TENANT_ACCESS_DENIED` / `UNAUTHENTICATED`：如实报告并停止，不得尝试其他接口或凭证绕过。
+- `APPROVAL_REQUIRED`：说明请求已进入人工审批，返回可安全展示的审批 ID、状态和 `trace_id`。Agent 不能批准或拒绝；不要索取或使用人工审批凭证。
+- `WRITE_OUTCOME_UNKNOWN`：立即停止，明确说明不得自动重试；保留原 `idempotency_key` 和 `trace_id` 供人工核对。
 
-```bash
-curl -s "$JD_API_ENDPOINT/v1/analytics/revenue" | jq '{
-  today_revenue_yuan: (.current.revenue / 100),
-  today_orders: .current.orders,
-  yesterday_revenue_yuan: (.previous.revenue / 100),
-  change_pct: .change
-}'
-```
-
-## 查看最近订单
-
-```bash
-# 最近 10 笔订单
-curl -s "$JD_API_ENDPOINT/v1/orders?page_size=10" | jq '.orders[] | {
-  order_id,
-  created_at,
-  status,
-  customer: .customer_name,
-  amount_yuan: (.total_amount / 100),
-  product: .items[0].name
-}'
-```
-
-## 按状态筛选订单
-
-```bash
-# 待付款订单
-curl -s "$JD_API_ENDPOINT/v1/orders?status=pending" | jq '{total: .total, orders: [.orders[] | {order_id, amount_yuan: (.total_amount / 100)}]}'
-
-# 已退款订单
-curl -s "$JD_API_ENDPOINT/v1/orders?status=refunded" | jq '{total: .total, orders: [.orders[] | {order_id, amount_yuan: (.total_amount / 100)}]}'
-```
-
-## 查询单个订单
-
-```bash
-curl -s "$JD_API_ENDPOINT/v1/orders/JD202602140001" | jq '{
-  order_id,
-  status,
-  customer: .customer_name,
-  amount_yuan: (.total_amount / 100),
-  items: [.items[] | {name, quantity, price_yuan: (.price / 100)}],
-  logistics
-}'
-```
-
-## 销售趋势（近 N 天）
-
-```bash
-# 近 7 天收入趋势
-curl -s "$JD_API_ENDPOINT/v1/analytics/trend?days=7&metric=revenue" | jq '{
-  metric,
-  trend: [.points[] | {date, value_yuan: (.value / 100)}]
-}'
-
-# 近 7 天订单量趋势
-curl -s "$JD_API_ENDPOINT/v1/analytics/trend?days=7&metric=orders" | jq '.points[] | {date, orders: .value}'
-```
-
-## 退货退款分析
-
-```bash
-curl -s "$JD_API_ENDPOINT/v1/analytics/refunds?period=week" | jq '{
-  period,
-  total_orders,
-  refunded_orders,
-  refund_rate,
-  refund_amount_yuan: (.refund_amount / 100),
-  top_reasons: .top_refund_reasons
-}'
-```
-
-## 展示注意事项
-
-- 金额字段值的单位是**分**，向用户展示时**必须除以 100** 转为元，如 `29900` 展示为 `¥299.00`
-- 日期格式为 `YYYY-MM-DD`，时间带 `+08:00` 时区
-- status 中文对照：`pending`=待付款, `paid`=已付款, `shipped`=已发货, `delivered`=已签收, `refunded`=已退款, `cancelled`=已取消
-- 百分比变化 `change_pct` 正数表示增长，负数表示下降
+所有金额均为分，展示给用户时除以 100。订单状态：`pending` 待付款、`paid` 已付款、`shipped` 已发货、`delivered` 已签收、`refunded` 已退款、`cancelled` 已取消。

@@ -1,10 +1,10 @@
-# E-commerce OpenClaw: Phases 1 and 2
+# E-commerce OpenClaw Agent Platform: Phases 1–5
 
 The existing Flask Mock API now stores business data in SQLite using SQLAlchemy.
 All 20 original GET routes, their response fields, filtering, and pagination remain
-available. The four OpenClaw Skills still use `curl "$JD_API_ENDPOINT/..." | jq`.
-Phases 1 and 2 of `plan.md` are implemented. The provider-independent dispatcher
-adds a controlled execution path without changing the existing Skills.
+available. Phases 1–5 of `plan.md` are implemented. OpenClaw uses a native typed
+Tool Plugin that forwards authenticated calls to the provider-independent
+Dispatcher; the four Skills no longer call Flask routes directly.
 
 ## Install and run
 
@@ -17,9 +17,10 @@ mock-api/venv/bin/python mock-api/app.py
 ```
 
 The API listens on port 8080. `GET /healthz` remains public. For runtime-only
-installation, use `requirements.txt`. The existing `start.sh` can launch the API
-and OpenClaw after dependencies are installed; it also requires OpenClaw and the
-existing `.env` configuration (`JD_API_ENDPOINT`, `JD_SHOP_NAME`).
+installation, use `requirements.txt`. After building/installing the plugin, copy
+`.env.example` to `.env` and run `./start.sh` to launch the backend, Dispatcher,
+and OpenClaw. The launcher gives each child only its required credentials; human
+approval credentials are explicitly removed from the OpenClaw environment.
 
 The default database is `mock-api/business.sqlite3`, resolved relative to the
 application file regardless of the working directory. To choose another file:
@@ -318,8 +319,9 @@ both services. Pending rows require manual investigation.
 
 ### Operational limitations
 
-- Existing direct Flask routes remain accessible and independently authorized;
-  Agent network restriction and Skill migration belong to later phases.
+- Existing direct Flask routes remain accessible to host processes and remain
+  independently authenticated/authorized. Phase 5 supplies a restrictive
+  OpenClaw tool-policy example, but local process isolation is not a host firewall.
 - Production identity infrastructure, an approval UI, automatic reconciliation,
   and LLM-specific integration are not implemented.
 - Unknown writes are never automatically retried. Inspect a persisted approval
@@ -398,13 +400,137 @@ these writes automatically, including when it reports `WRITE_OUTCOME_UNKNOWN`.
 SQLite startup migration preserves existing data, adds approval/idempotency
 columns, and marks legacy unbound placeholder approvals FAILED. The exactly-once
 guarantee covers local SQLite financial effects; a future external payment
-provider will require its own idempotency/reconciliation protocol. Phase 5
-OpenClaw integration is not included.
+provider will require its own idempotency/reconciliation protocol.
+
+## Phase 5: OpenClaw Tool Adapter
+
+The local execution path is:
+
+```text
+User → OpenClaw Agent → TypeScript Tool Plugin → Dispatcher :8081
+     → authenticated Flask Backend :8080 → business SQLite
+```
+
+OpenClaw 2026.7.1 supports native typed Tool Plugins, so no CLI fallback or new
+Agent framework is used. `openclaw-plugin/` uses `defineToolPlugin`; a generator
+loads `dispatcher.registry.REGISTRY` and produces TypeScript metadata and input
+JSON Schemas. The generated file is not a second manually maintained registry.
+Run the generator whenever registry metadata changes:
+
+```sh
+mock-api/venv/bin/python scripts/generate_openclaw_tools.py
+```
+
+The plugin registers the current 24 Dispatcher tools: the 22 Phase 3 business
+tools plus Phase 4 `get_approval` and `execute_approval`. Human `approve` and
+`reject` endpoints are deliberately absent. POST/PATCH tools are optional in
+OpenClaw and require explicit operator allowlisting. Agent financial schemas
+strengthen the backward-compatible backend contract by requiring
+`idempotency_key`; this closes the Phase 4 audit's unkeyed Agent retry gap.
+
+### Build, install, and verify without an LLM
+
+Node 22.22.3+ is required by OpenClaw; the tested local version is Node 26.4.0.
+
+```sh
+cd openclaw-plugin
+npm install
+npm run plugin:validate
+npm test
+cd ..
+openclaw plugins install ./openclaw-plugin
+openclaw plugins inspect ecommerce-dispatcher --runtime --json
+```
+
+Installation changes the selected OpenClaw profile, so perform it explicitly.
+For an isolated profile, prefix both OpenClaw commands with
+`openclaw --profile ecommerce-agent`. This implementation did not modify
+`~/.openclaw/openclaw.json`; runtime loading was verified using a temporary
+state/config directory.
+
+### Start the local stack
+
+Use separate terminals. Credentials are runtime configuration and must never be
+put in a prompt, Skill, tool argument, source file, or log.
+
+```sh
+# Terminal 1: trusted backend process
+export API_TOKENS='{"replace-agent-token":"user-a"}'
+export HUMAN_APPROVAL_TOKENS='{"replace-human-token":"existing-manager-user"}'
+export LEGACY_READS=false
+mock-api/venv/bin/python mock-api/app.py
+
+# Terminal 2: Dispatcher (has no fallback or privileged token)
+export DISPATCHER_BACKEND_URL='http://127.0.0.1:8080'
+mock-api/venv/bin/python -m dispatcher
+
+# Terminal 3: OpenClaw runtime; only the Agent credential belongs here
+export OPENCLAW_ECOMMERCE_API_TOKEN='replace-agent-token'
+export OPENCLAW_ECOMMERCE_DISPATCHER_URL='http://127.0.0.1:8081'
+export OPENCLAW_ECOMMERCE_TIMEOUT_MS=7000
+openclaw gateway run
+```
+
+The adapter accepts only a credential-free loopback HTTP(S) Dispatcher origin.
+It makes one request per tool invocation, disables redirects, observes a bounded
+timeout, validates the structured Observation, and preserves Dispatcher error
+codes, recoverability, retry hints, approval receipts, and trace IDs. It never
+retries writes or reads; only the existing Dispatcher may perform its bounded
+backend retry policy for GET requests. `WRITE_OUTCOME_UNKNOWN` must be reconciled
+using its original idempotency key and trace ID, never blindly replayed.
+
+Example Agent requests after a model becomes available:
+
+- “Look up order PHASE5-ORDER.” → `get_order {"order_id":"PHASE5-ORDER"}`
+- “Show low-stock products.” → `inventory_alerts {"type":"low_stock"}`
+- “Refund 200 yuan from order PHASE5-ORDER for a return.” → first inspect the
+  order, then call `refund_order` with 20000 cents and a stable idempotency key.
+
+### Security boundary and tool policy
+
+The runtime token maps to exactly one persisted backend user/tenant. Identity is
+not in any tool schema, and the backend remains the final RBAC, tenant, risk,
+approval, and idempotency boundary. Human approval tokens are configured only in
+the backend and are never available to OpenClaw. `execute_approval` can execute
+only an independently approved request as its original initiator; it cannot make
+the human decision.
+
+Apply the settings in `config/openclaw-secure-agent.example.json` to the selected
+Agent/profile before production-style use. The example enables the plugin while
+denying runtime/exec, filesystem, web, browser/UI, node, and Gateway tools and
+enables sandboxing. OpenClaw configuration validation passes for this file. Tool
+instructions alone are not treated as a security boundary.
+
+Complete network isolation cannot be guaranteed in this local single-host demo:
+the Flask port is still reachable by other host processes, native plugins share
+the Gateway process, and an operator can weaken tool policy or install other
+plugins. The tested Agent configuration has no supported exec/web/browser tool
+surface for directly reaching Flask; use container/network firewall rules in a
+deployment that needs a hard egress boundary. The backend's independent checks
+remain mandatory even with network isolation.
+
+### Phase 5 verification status
+
+Verified locally without any LLM call: schema generation, all 24 registrations,
+OpenClaw manifest validation, actual OpenClaw runtime plugin loading, adapter
+timeouts/malformed responses, read-only proof-of-concept calls, structured error
+and trace propagation, real Dispatcher/Flask/SQLite execution, trusted token
+propagation, RBAC and cross-tenant denial, approval separation, keyed replay,
+single execution, and backend unavailability.
+
+Not yet verified because the configured DashScope quota returns HTTP 403: model
+tool selection, natural-language parameter extraction, Agent reasoning, and
+Observation-driven self-correction. No DashScope/OpenAI API was called, billing
+was not changed, and no model fallback was configured.
 
 ## Tests
 
 ```sh
 mock-api/venv/bin/python -m pytest -q
+
+cd openclaw-plugin
+npm run plugin:check
+npm test
 ```
 
 Tests use temporary SQLite files and cover legacy GET compatibility, business
@@ -420,3 +546,8 @@ an independent JSON Schema validator, malformed input/output, tenant and
 permission denials, explicit HTTP-200 business failures, bounded retries, lost
 write responses, backend rechecks after preflight, concurrent caller isolation,
 durable audits, audit failures, and gateway/HTTP transport behavior.
+
+`tests/test_phase5_openclaw.py` compiles the adapter and uses local Node direct
+tool invocation against real loopback Dispatcher and backend WSGI servers. It
+does not invoke an LLM. In restricted sandboxes, the test command needs permission
+to bind ephemeral `127.0.0.1` ports.

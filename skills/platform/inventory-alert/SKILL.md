@@ -1,89 +1,28 @@
 ---
 name: inventory-alert
 description: 库存监控：低库存预警、断货提醒、库存总览、补货建议。
-metadata:
-  openclaw:
-    emoji: "📦"
-    requires: 
-      bins: ["curl", "jq"]
-      env: ["JD_API_ENDPOINT"]
+metadata: { "openclaw": { "emoji": "📦" } }
 ---
 
 # 库存预警 (Inventory Alert)
 
-监控 $JD_SHOP_NAME 的库存状况，及时发现缺货风险。
+所有数据必须通过受控 Dispatcher 工具获取。禁止 `exec`、shell、`curl`、浏览器和直接业务 API 请求；不得把 token 或租户身份写入参数。
 
-## 库存总览
+## 工具选择
 
-```bash
-curl -s "$JD_API_ENDPOINT/v1/inventory/summary" | jq .
-```
+- 总览：`inventory_summary`，参数 `{}`。
+- 预警：`inventory_alerts`，`type` 必须为 `low_stock`、`out_of_stock` 或 `overstock`。
+- 单 SKU：`inventory_sku`，必填 `sku`。
+- 补货建议：`restock_suggestions`，参数 `{}`。
+- 需要商品名称或核对 SKU 时：使用 `list_products` 或 `product_stats`，不要猜测。
 
-返回字段：`total_skus` (总SKU数), `total_stock` (总库存), `low_stock_count` (低库存数), `out_of_stock_count` (断货数), `overstock_count` (积压数)
+## Observation 处理
 
-## 低库存预警
+- `success: true` 时读取 `data`。
+- `INVALID_ARGUMENT` 可依据 schema 和 `retry_hint` 修正一次明确的参数错误。
+- `RESOURCE_NOT_FOUND` 可用授权商品列表核对 SKU。
+- `PERMISSION_DENIED`、`TENANT_ACCESS_DENIED`、`UNAUTHENTICATED` 必须停止并报告，不能绕过。
+- `APPROVAL_REQUIRED` 不应由这些只读库存工具产生；若出现，报告 trace 并停止。
+- `WRITE_OUTCOME_UNKNOWN` 不应自动重试，报告 `trace_id` 供调查。
 
-```bash
-curl -s "$JD_API_ENDPOINT/v1/inventory/alerts?type=low_stock" | jq '.alerts[] | {
-  sku,
-  name,
-  current_stock,
-  threshold,
-  daily_sales_avg,
-  estimated_stockout_days,
-  suggested_restock
-}'
-```
-
-## 断货商品
-
-```bash
-curl -s "$JD_API_ENDPOINT/v1/inventory/alerts?type=out_of_stock" | jq '.alerts[] | {
-  sku,
-  name,
-  daily_sales_avg,
-  suggested_restock
-}'
-```
-
-## 积压商品（库存过高）
-
-```bash
-curl -s "$JD_API_ENDPOINT/v1/inventory/alerts?type=overstock" | jq '.alerts[] | {
-  sku,
-  name,
-  current_stock,
-  daily_sales_avg
-}'
-```
-
-## 查询单个 SKU 的库存
-
-```bash
-curl -s "$JD_API_ENDPOINT/v1/inventory/SHOE-WH-42" | jq .
-```
-
-返回字段：`current_stock`, `threshold`, `daily_sales_avg`, `estimated_stockout_days`, `status` (out_of_stock / low_stock / normal)
-
-## 补货建议
-
-```bash
-curl -s "$JD_API_ENDPOINT/v1/inventory/restock-suggestions" | jq '.suggestions[] | {
-  sku,
-  name,
-  current_stock,
-  daily_sales_avg,
-  suggested_quantity,
-  estimated_cost_yuan: (.estimated_cost / 100),
-  urgency
-}'
-```
-
-## 状态与紧急程度说明
-
-- `out_of_stock`: 已断货 (库存=0)，需立即补货
-- `low_stock`: 低库存 (低于阈值)，需尽快补货
-- `normal`: 库存正常
-- urgency 紧急程度: `critical` (已断货) > `high` (库存<5) > `medium` (低于阈值)
-- 预估成本 `estimated_cost` 单位为**分**，展示时除以 100 转为元
-- `estimated_stockout_days` 表示按当前销售速度，多少天后断货
+`estimated_cost` 单位为分，展示时除以 100。不要从预警结果推断或执行补货写操作；平台没有注册此类写工具。

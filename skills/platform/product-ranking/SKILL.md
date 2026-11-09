@@ -1,102 +1,29 @@
 ---
 name: product-ranking
 description: 查询商品排行：热销榜、滞销品、新品表现、品类分布、单品统计。
-metadata:
-  openclaw:
-    emoji: "🏆"
-    requires: 
-      bins: ["curl", "jq"]
-      env: ["JD_API_ENDPOINT"]
+metadata: { "openclaw": { "emoji": "🏆" } }
 ---
 
 # 商品排行 (Product Ranking)
 
-查询 $JD_SHOP_NAME 的商品销售排行与统计。所有金额单位为**分**。
+仅调用 OpenClaw 中注册的受控 Dispatcher 工具。禁止使用 `exec`、shell、`curl`、浏览器或直接访问 Flask API。运行时身份不可作为参数提供或修改。
 
-## 热销 TOP N
+## 工具选择与参数
 
-```bash
-# 本周热销前 10
-curl -s "$JD_API_ENDPOINT/v1/products/ranking?sort=sales_desc&period=week&limit=10" | jq '.ranking[] | {
-  rank,
-  sku,
-  name,
-  category,
-  sales_count,
-  revenue_yuan: (.revenue / 100),
-  stock_remaining
-}'
-```
+- 热销/滞销/新品：`product_ranking`。`period` 为 `today|week|month`，`sort` 为 `sales_desc|sales_asc|revenue_desc`，`filter` 为 `new|all`，`limit` 使用 schema 允许的正整数。
+- 单品统计：`product_stats`，必填 `sku`，可选 `period`。
+- 品类分布：`analytics_category`，参数为空对象。
+- 商品列表/搜索：`list_products`，可用 `status`、`category`、`keyword`、分页参数。
+- 用户明确要求改价时：先用 `product_stats` 核对 SKU 和当前价格，再调用可选工具 `change_price`。`price` 是正整数分值，且必须提供稳定 `idempotency_key`。不得自行调整价格。
 
-## 滞销商品
+## 错误处理
 
-```bash
-curl -s "$JD_API_ENDPOINT/v1/products/ranking?sort=sales_asc&period=month&limit=5" | jq '.ranking[] | {
-  rank,
-  name,
-  sales_count,
-  stock_remaining
-}'
-```
+只信任结构化 Observation：成功读取 `data`；失败报告 `error.code` 与 `trace_id`。
 
-## 新品表现（近 30 天上架）
+- `INVALID_ARGUMENT`：按 schema 修正，不能猜 SKU、枚举或价格。
+- `RESOURCE_NOT_FOUND`：用 `list_products` 在当前授权租户内确认；不得切换租户。
+- 权限/认证错误：停止并报告，不尝试直连后端。
+- `APPROVAL_REQUIRED`：告知用户已创建待审批请求。Agent 不可批准/拒绝，也不可接触人工审批凭证。
+- `WRITE_OUTCOME_UNKNOWN`：不得重试改价；保留原 key 和 trace 供人工核对。
 
-```bash
-curl -s "$JD_API_ENDPOINT/v1/products/ranking?filter=new&sort=sales_desc" | jq '.ranking[] | {
-  name,
-  sales_count,
-  revenue_yuan: (.revenue / 100)
-}'
-```
-
-## 单品销售统计
-
-```bash
-# 查询某个 SKU 的销售详情（替换 SKU 编码）
-curl -s "$JD_API_ENDPOINT/v1/products/SHOE-WH-42/stats?period=week" | jq '{
-  sku,
-  name,
-  period,
-  sales_count,
-  revenue_yuan: (.revenue / 100),
-  avg_daily_sales,
-  current_stock,
-  price_yuan: (.price / 100)
-}'
-```
-
-## 品类销售分布
-
-```bash
-curl -s "$JD_API_ENDPOINT/v1/analytics/category" | jq '.categories[] | {
-  category,
-  product_count,
-  sales_count,
-  revenue_yuan: (.revenue / 100),
-  revenue_share: (.revenue_pct * 100 | tostring + "%")
-}'
-```
-
-## 商品列表
-
-```bash
-# 在售商品
-curl -s "$JD_API_ENDPOINT/v1/products?status=on_sale" | jq '.products[] | {
-  sku,
-  name,
-  category,
-  price_yuan: (.price / 100),
-  status
-}'
-
-# 搜索商品
-curl -s "$JD_API_ENDPOINT/v1/products?keyword=白色" | jq '.products[] | {sku, name}'
-```
-
-## 参数说明
-
-- `period`: `today` (今天) / `week` (本周) / `month` (本月)
-- `sort`: `sales_desc` (销量降序) / `sales_asc` (销量升序) / `revenue_desc` (收入降序)
-- `filter`: `new` (近 30 天上架) / `all` (全部)
-- `limit`: 返回条数，默认 10
-- 金额字段单位是**分**，展示时除以 100 转为元
+金额字段单位为分，展示时除以 100。比例字段按其 schema 含义展示，不能再次错误缩放。

@@ -1,0 +1,30 @@
+{
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "mode": "all"
+      }
+    }
+  },
+  "tools": {
+    "profile": "minimal",
+    "alsoAllow": [
+      "ecommerce-dispatcher"
+    ],
+    "deny": [
+      "group:runtime",
+      "group:fs",
+      "group:web",
+      "group:ui",
+      "group:nodes",
+      "gateway"
+    ],
+    "sandbox": {
+      "tools": {
+        "allow": [
+          "ecommerce-dispatcher"
+        ]
+      }
+    }
+  }
+}
