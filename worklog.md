@@ -579,6 +579,120 @@ with 374 passes in 10.32 seconds.
 
 No commit or push was performed.
 
+## Phase 4 focused independent security audit
+
+### Scope
+
+Reviewed the trusted Flask boundary, authentication credential separation,
+approval creation/decision/execution, canonical request binding, SQLite models
+and migration, idempotency replay, Dispatcher approval handling, transaction
+failure paths, and all existing Phase 4 tests. This audit made no production
+code, plan, README, Phase 5, or external-service changes.
+
+Added `tests/test_phase4_security_audit.py` as an independent 21-case audit
+suite. It creates its own real temporary SQLite database and users, uses actual
+Flask routes, and inspects persisted business and approval state rather than
+mocking policy or business logic.
+
+### Confirmed security bugs
+
+No Critical, High, Medium, or Low application security bug was reproduced in
+the six prioritized areas. In particular:
+
+- Operator, Manager, Admin, and separate human credentials all receive a
+  persisted PENDING approval for HIGH-risk refunds and price changes; none can
+  directly apply the operation.
+- Separate API and human credentials mapped to the same Manager/Admin user do
+  not defeat the user-ID self-approval check. Foreign-tenant Admin credentials
+  cannot read, approve, reject, or execute another tenant's approval.
+- Concurrent execution of two distinct, independently approved refunds against
+  one balance produces one COMPLETED operation and one FAILED revalidation;
+  the refundable balance is not exceeded. Competing price approvals similarly
+  cannot both apply against the original price baseline.
+- Replaying a completed approval ID returns the stored result. Repeating the
+  same idempotency key returns the original submission receipt. Neither path
+  creates a second refund.
+- Injected failures while inserting the idempotency record, committing an
+  approval decision audit, and committing the completion audit roll back the
+  related approval/idempotency/business changes. No orphan receipt, partial
+  refund, or falsely completed approval was observed.
+- Current initiator and reviewer permissions, current refundable balance/order
+  state, price baseline, and risk decision are revalidated under the serialized
+  execution transaction.
+
+### Confirmed design limitation
+
+**R01 — Medium: direct unkeyed low-risk writes have no duplicate protection.**
+
+- Locations: `mock-api/business.py:99`, `mock-api/business.py:151`,
+  `mock-api/approvals.py:80`, and `mock-api/approvals.py:125`.
+- Root cause: backward-compatible idempotency keys are optional. The backend
+  creates and checks an idempotency record only when the caller supplies a key.
+  Without one, identical requests cannot be distinguished from two intentional
+  business operations.
+- Reproduction: send the same authorized `POST /v1/orders/AUDIT-ORDER/refund`
+  twice with `amount=100` and no body/header idempotency key. Both return 201,
+  two refund rows are stored, and refunded amount increases by 200 cents.
+- Expected for an exactly-once caller: an ambiguous retry should resolve to the
+  original operation rather than applying again.
+- Actual: both requests execute because no stable operation identity exists.
+- Automated reproduction: yes,
+  `test_unkeyed_low_risk_repeats_are_not_deduplicated` in
+  `tests/test_phase4_security_audit.py`.
+- Suggested fix: in a future compatibility decision, require an idempotency key
+  for refund/price writes, or have a trusted gateway assign and persist a stable
+  key that survives caller retries. A random key generated independently for
+  every retry would not solve the problem. This audit did not change the API.
+- Classification: confirmed operational/security limitation, not a keyed
+  idempotency failure. Repeated requests using the same valid key did not
+  duplicate effects, and high-risk executions are independently deduplicated by
+  approval ID.
+
+### Unverified risks and defense-in-depth gaps
+
+- **Database-compromise threat — Medium, unverified/out of current trust
+  boundary.** The SHA-256 request digest at `mock-api/approvals.py:146` detects
+  API parameter substitution and accidental row corruption, but it is not a
+  secret-key MAC. Approval status and approver fields at
+  `mock-api/models.py:124` are not part of the digest. An attacker with direct
+  write access to the trusted SQLite file could recompute a request digest or
+  forge decision state. No application/API path granting such access was found.
+  Suggested hardening is an application-held HMAC/signature over request and
+  decision metadata plus stricter database access and state constraints.
+- **Deployment boundary — Medium, unverified outside this mock.** Atomicity and
+  exactly-once behavior cover one SQLite database. A future payment/catalog
+  service could commit externally while the local transaction rolls back.
+  External providers need their own idempotency and reconciliation protocol.
+- **Failure-audit availability — Low, known observability limitation.** The
+  infrastructure-failure audit at `mock-api/approvals.py:195` uses the same
+  database after rollback. A total database outage can prevent that event from
+  persisting, although the original transaction remains rolled back and server
+  logs retain the failure. A separate durable security event sink would improve
+  assurance.
+
+### Verification
+
+New focused tests cover privileged direct-bypass attempts for both operations,
+self-approval with separate credentials, all cross-tenant lifecycle actions,
+competing distinct approvals, completed receipt/execution replay, unkeyed
+duplicate behavior, three database failure windows, and execution-time
+permission revalidation.
+
+Commands:
+
+```sh
+mock-api/venv/bin/python -m pytest tests/test_phase4_security_audit.py -q --tb=short
+mock-api/venv/bin/python -m pytest -q --tb=short --junitxml=/tmp/ecommerce-phase4-security-audit.xml
+mock-api/venv/bin/python -m compileall -q dispatcher mock-api tests
+git diff --check
+```
+
+Results: focused audit **21 passed**; complete regression suite **520 passed,
+0 failed, 0 errors, 0 skipped** in 16.42 seconds. Compilation passed. JUnit is
+stored at `/tmp/ecommerce-phase4-security-audit.xml`.
+
+No production code was modified. No commit or push was performed.
+
 ## 2026-11-08 — Phase 3 RBAC and trusted risk policy
 
 ### Plan and policy decisions
