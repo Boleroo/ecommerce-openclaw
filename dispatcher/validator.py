@@ -10,22 +10,28 @@ WRITE_REJECTIONS = {
     "RESOURCE_NOT_FOUND": 404, "INVALID_BUSINESS_STATE": 409,
     "REFUND_AMOUNT_EXCEEDED": 409,
 }
+AUTHORIZATION_CODES = {
+    "PERMISSION_DENIED", "TENANT_ACCESS_DENIED", "APPROVAL_REQUIRED",
+    "APPROVAL_REJECTED", "APPROVAL_EXPIRED",
+}
 
 
 def validate_response(response, output_model, success_status=200, *, is_write=False):
     if is_write and response.status_code not in (success_status, 400, 401, 403, 404, 409):
         raise ToolFailure("WRITE_OUTCOME_UNKNOWN")
-    if response.status_code == 401:
-        raise ToolFailure("UNAUTHENTICATED")
-    if response.status_code == 403:
-        raise ToolFailure("PERMISSION_DENIED")
     body = response.body
+    code = None
     if response.is_json and isinstance(body, dict):
         code = body.get("code")
         if isinstance(body.get("error"), dict):
             code = body["error"].get("code", code)
         if type(code) is int:
             code = LEGACY_CODES.get(code)
+    if response.status_code == 401:
+        raise ToolFailure("UNAUTHENTICATED")
+    if response.status_code == 403:
+        raise ToolFailure(code if code in AUTHORIZATION_CODES else "PERMISSION_DENIED")
+    if response.is_json and isinstance(body, dict):
         if isinstance(code, str) and code in ERRORS:
             if is_write and WRITE_REJECTIONS.get(code) != response.status_code:
                 raise ToolFailure("WRITE_OUTCOME_UNKNOWN")
@@ -95,6 +101,10 @@ def validate_postconditions(tool, arguments, result, before=None):
             raise ToolFailure("INVALID_BACKEND_RESPONSE")
         validate_ordering(result.ranking, "sales_count" if arguments.sort.startswith("sales") else "revenue", arguments.sort.endswith("desc"))
     if tool.name == "change_price" and result.product.price != arguments.price:
+        raise ToolFailure("INVALID_BACKEND_RESPONSE")
+    if tool.name == "change_user_role" and (
+        result.user_id != arguments.user_id or result.role != arguments.role
+    ):
         raise ToolFailure("INVALID_BACKEND_RESPONSE")
     if tool.name == "refund_order":
         if result.refund.order_id != arguments.order_id or result.refund.amount != arguments.amount or result.refund.reason != arguments.reason:

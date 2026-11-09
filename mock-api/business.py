@@ -4,7 +4,8 @@ from uuid import uuid4
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import func, select, text
 
-from models import Order, Product, Refund, Tenant
+from models import Order, Product, Refund, Tenant, User
+from policy import ROLE_PERMISSIONS, classify_price_change, classify_refund
 
 
 operations = Blueprint("operations", __name__)
@@ -33,6 +34,11 @@ def body_fields(required, optional=()):
     if not isinstance(body, dict) or set(body) - set(required) - set(optional) or set(required) - set(body):
         raise BusinessError("INVALID_ARGUMENT", f"Expected JSON fields: {', '.join(required)}")
     return body
+
+
+def require_permission(permission):
+    if permission not in g.permissions:
+        raise BusinessError("PERMISSION_DENIED", "Required permission is missing", 403)
 
 
 def products():
@@ -92,6 +98,7 @@ def refund_order(order_id):
     reason = body.get("reason", "")
     if not isinstance(reason, str) or len(reason) > 500:
         raise BusinessError("INVALID_ARGUMENT", "reason must be a string of at most 500 characters")
+    require_permission("orders:refund")
     with g.db.begin():
         g.db.execute(text("BEGIN IMMEDIATE"))
         order = g.db.get(Order, (g.tenant_id, order_id))
@@ -101,6 +108,9 @@ def refund_order(order_id):
             raise BusinessError("INVALID_BUSINESS_STATE", "Order status does not permit refunds", 409)
         if amount > order.total_amount - order.refunded_amount:
             raise BusinessError("REFUND_AMOUNT_EXCEEDED", "Amount exceeds the remaining refundable amount", 409)
+        decision = classify_refund(amount)
+        if decision.approval_required:
+            raise BusinessError("APPROVAL_REQUIRED", decision.approval_message, 403)
         order.refunded_amount += amount
         if order.refunded_amount == order.total_amount:
             order.status = "refunded"
@@ -118,12 +128,33 @@ def refund_order(order_id):
 def change_price(sku):
     body = body_fields(("price",))
     price = positive_integer(body["price"], "price", MAX_PRICE)
+    require_permission("products:price")
     with g.db.begin():
         g.db.execute(text("BEGIN IMMEDIATE"))
         product = g.db.get(Product, (g.tenant_id, sku))
         if product is None:
             raise BusinessError("RESOURCE_NOT_FOUND", "Product not found", 404)
         previous_price = product.price
+        decision = classify_price_change(previous_price, price)
+        if decision.approval_required:
+            raise BusinessError("APPROVAL_REQUIRED", decision.approval_message, 403)
         product.price = price
         response = {"product": product.to_dict(), "previous_price": previous_price}
+    return jsonify(response)
+
+
+@operations.patch("/v1/users/<user_id>/role")
+def change_user_role(user_id):
+    body = body_fields(("role",))
+    role = body["role"]
+    if not isinstance(role, str) or role not in ROLE_PERMISSIONS:
+        raise BusinessError("INVALID_ARGUMENT", "role must be viewer, operator, manager or admin")
+    require_permission("roles:manage")
+    with g.db.begin():
+        g.db.execute(text("BEGIN IMMEDIATE"))
+        user = g.db.get(User, user_id)
+        if user is None or user.tenant_id != g.tenant_id:
+            raise BusinessError("RESOURCE_NOT_FOUND", "User not found", 404)
+        user.role = role
+        response = {"user_id": user.id, "role": user.role}
     return jsonify(response)

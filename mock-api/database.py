@@ -24,5 +24,13 @@ def init_database(app):
         connection.execute("PRAGMA foreign_keys=ON")
 
     Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        user_columns = {
+            row[1] for row in connection.exec_driver_sql("PRAGMA table_info(users)")
+        }
+        if "role" not in user_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN role VARCHAR NOT NULL DEFAULT 'operator'"
+            )
     app.extensions["database"] = engine
     app.extensions["session_factory"] = sessionmaker(bind=engine, expire_on_commit=False)

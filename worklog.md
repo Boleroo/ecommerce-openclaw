@@ -578,3 +578,120 @@ with 374 passes in 10.32 seconds.
   absent.
 
 No commit or push was performed.
+
+## 2026-11-08 — Phase 3 RBAC and trusted risk policy
+
+### Plan and policy decisions
+
+Updated `plan.md` before implementation with the binding business policy:
+
+- Viewer has `business:read` only.
+- Operator adds `orders:refund` and `products:price`.
+- Manager adds `approvals:manager`.
+- Admin adds `approvals:admin` and tenant-scoped `roles:manage`.
+- Approval permissions describe authority for the later approval workflow; they
+  do not constitute an approval and do not bypass a risk decision.
+- Refunds through 10,000 cents are MEDIUM/direct. Refunds from 10,001 through
+  50,000 cents are HIGH and require Manager/Admin approval. Larger refunds are
+  HIGH and require Admin approval.
+- Price changes compare `abs(new - old) * 100` with `old * 5` and `old * 20`.
+  The inclusive 5% boundary is MEDIUM/direct, over 5% through 20% requires
+  Manager/Admin approval, and over 20% requires Admin approval. No floating
+  point comparison is used.
+- Trusted-backend precedence is authentication, server-derived identity,
+  request schema, role permission, tenant-scoped lookup, current business
+  constraints, risk classification, then approval enforcement/execution.
+- Business-invalid operations are rejected before an approval requirement can
+  affect the result. Client-supplied approval claims remain invalid arguments.
+- Phase 3 has no approval execution path. Every approval-required refund or
+  price change fails closed with non-recoverable `APPROVAL_REQUIRED`, including
+  requests made by Manager or Admin.
+
+### Implementation
+
+- Added `mock-api/policy.py` as the single backend RBAC/risk policy source. Role
+  permissions are immutable; refund and price decisions return explicit risk
+  and required approval levels.
+- Added a constrained `User.role` column. New demo users default to Operator.
+  Existing SQLite databases receive a backward-compatible `operator` role
+  column migration during initialization.
+- Authentication now derives role and permissions from the active persisted
+  user. `GET /v1/auth/context` returns user, tenant, role, and sorted permissions.
+  Identity claims in query/body parameters remain rejected; role-like headers
+  remain non-authoritative.
+- Refund and price routes independently enforce submission permission, tenant
+  ownership, current business validity, integer thresholds, and fail-closed
+  approval requirements inside their existing serialized transactions.
+- Added `PATCH /v1/users/{user_id}/role`. Only Admin may assign one of the four
+  roles, and only to a user in the authenticated Admin's tenant. Role assignment
+  cannot create or imply an approval.
+- Extended the provider-independent Dispatcher identity schema with the role,
+  registered `change_user_role`, and marked refund/price tools as DYNAMIC risk.
+  Structured 403 approval responses preserve `APPROVAL_REQUIRED` rather than
+  collapsing to `PERMISSION_DENIED`.
+- Existing no-automatic-write-retry behavior is unchanged. Approval-required
+  requests are attempted once at most; ambiguous refund, price, and role writes
+  still produce `WRITE_OUTCOME_UNKNOWN`.
+- Updated prior successful-write tests to use exact MEDIUM-risk values. Their
+  persistence, rollback, concurrency, tenant-isolation, and unknown-outcome
+  assertions remain intact; HIGH-risk behavior is covered separately rather
+  than weakening those tests.
+- Updated `README.md` with roles, dynamic risk behavior, the 22-tool registry,
+  role administration, and the Phase 3 fail-closed limitation.
+
+### Verification
+
+Added `tests/test_phase3_policy.py` with 39 focused cases. Expanding the existing
+all-tools test for the new role tool adds two more integration cases.
+
+Coverage includes:
+
+- Exact permission sets and authenticated context for Viewer, Operator, Manager,
+  and Admin.
+- Viewer read-only behavior and MEDIUM execution by Operator/Manager/Admin.
+- Refund boundaries at 10,000, 10,001, 50,000, and 50,001 cents.
+- Price increases and decreases at exactly 5%, one cent beyond 5%, exactly 20%,
+  and one cent beyond 20%, using actual Flask/SQLite execution.
+- Manager/Admin fail-closed behavior despite their approval authority, with no
+  `ApprovalRequest` rows created.
+- Business-state and refundable-balance errors taking precedence over approval.
+- Rejection of forged early approval parameters.
+- Admin tenant isolation for business resources and user-role administration at
+  both direct backend and Dispatcher entry points.
+- Dispatcher permission denial, approval propagation, audit outcomes, bounded
+  write attempts, and response validation for role changes.
+- Automatic migration of a pre-Phase-3 SQLite `users` table.
+
+Final commands:
+
+```sh
+mock-api/venv/bin/python -m pytest tests/test_phase3_policy.py tests/test_dispatcher.py -q --tb=short
+mock-api/venv/bin/python -m pytest -q --tb=short --junitxml=/tmp/ecommerce-phase3.xml
+mock-api/venv/bin/python -m compileall -q dispatcher mock-api tests
+git diff --check
+```
+
+Results: **415 passed, 0 failed** in the complete suite (12.95 seconds). This
+includes all prior 374 regressions plus 41 Phase 3/new-tool cases. Compilation
+and whitespace checks pass. JUnit output is `/tmp/ecommerce-phase3.xml`.
+
+### Remaining limitations
+
+- Phase 4 is not implemented: there is no approval request creation, approve,
+  reject, expire, parameter binding, or execution flow. Consequently self-
+  approval is impossible today rather than merely checked at an approval API;
+  Phase 4 must explicitly enforce initiator and approver inequality.
+- Idempotency and automatic reconciliation remain absent. Unknown write outcomes
+  require manual state inspection and must not be retried automatically.
+- The role-management API is intentionally minimal. It has no last-Admin
+  safeguard, delegated administration, bulk changes, or role-change history in
+  the business `AuditLog`; Dispatcher invocations are still recorded in the
+  separate execution audit.
+- Demo bearer-token mapping remains local server configuration, not a production
+  identity provider. Explicit legacy anonymous-read mode still exposes only the
+  documented demo tenant's reads.
+- Business and Dispatcher audit databases remain separate transactions, and no
+  statement/branch coverage percentage was generated.
+
+No Phase 4 approval execution or idempotency code was added. No commit or push
+was performed.

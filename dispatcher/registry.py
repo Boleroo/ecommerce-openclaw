@@ -16,7 +16,7 @@ class Tool:
     method: Literal["GET", "POST", "PATCH"]
     endpoint: str
     required_permissions: frozenset[str] = frozenset({"business:read"})
-    risk_level: Literal["LOW", "HIGH"] = "LOW"
+    risk_level: Literal["LOW", "HIGH", "DYNAMIC"] = "LOW"
     path_fields: tuple[str, ...] = ()
     success_status: int = 200
 
@@ -67,6 +67,7 @@ REGISTRY = ToolRegistry([
     Tool("analytics_refunds", "Summarize persisted refunds, including partial refunds.", schemas.PeriodInput, schemas.RefundAnalyticsOutput, "GET", "/v1/analytics/refunds"),
     Tool("analytics_category", "Get demo sales calculations grouped by product category.", schemas.EmptyInput, schemas.CategoryOutput, "GET", "/v1/analytics/category"),
     Tool("analytics_aov", "Get daily average gross order value.", schemas.DaysInput, schemas.AverageOutput, "GET", "/v1/analytics/avg-order-value"),
-    Tool("refund_order", "Refund an eligible order in integer cents. Never automatically retry this write.", schemas.RefundInput, schemas.RefundResult, "POST", "/v1/orders/{order_id}/refund", frozenset({"business:read", "orders:refund"}), "HIGH", ("order_id",), 201),
-    Tool("change_price", "Change a catalog price in integer cents, from 1 to 100000000. Never automatically retry this write.", schemas.PriceInput, schemas.PriceResult, "PATCH", "/v1/products/{sku}/price", frozenset({"business:read", "products:price"}), "HIGH", ("sku",)),
+    Tool("refund_order", "Refund an eligible order in integer cents. Backend risk policy may require approval. Never automatically retry this write.", schemas.RefundInput, schemas.RefundResult, "POST", "/v1/orders/{order_id}/refund", frozenset({"business:read", "orders:refund"}), "DYNAMIC", ("order_id",), 201),
+    Tool("change_price", "Change a catalog price in integer cents. Backend risk policy may require approval. Never automatically retry this write.", schemas.PriceInput, schemas.PriceResult, "PATCH", "/v1/products/{sku}/price", frozenset({"business:read", "products:price"}), "DYNAMIC", ("sku",)),
+    Tool("change_user_role", "Assign a role to a user in the authenticated tenant. Admin only. Never automatically retry this write.", schemas.RoleInput, schemas.RoleResult, "PATCH", "/v1/users/{user_id}/role", frozenset({"business:read", "roles:manage"}), "HIGH", ("user_id",)),
 ])

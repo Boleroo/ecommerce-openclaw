@@ -10,6 +10,7 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from business import BusinessError, operations
 from database import init_database
 from models import Tenant, User
+from policy import permissions_for_role
 from read_api import reads
 from seed import seed_database
 
@@ -52,6 +53,8 @@ def create_app(config=None):
         if authorization is None and request.method in ("GET", "HEAD", "OPTIONS") and app.config["LEGACY_READS"]:
             g.tenant_id = "merchant-12345"
             g.user_id = None
+            g.role = "viewer"
+            g.permissions = permissions_for_role(g.role)
         else:
             scheme, separator, token = (authorization or "").partition(" ")
             user_id = tokens.get(token) if separator and scheme.lower() == "bearer" else None
@@ -61,9 +64,15 @@ def create_app(config=None):
                 user = session.get(User, user_id)
                 if user is None or not user.active or session.get(Tenant, user.tenant_id) is None:
                     raise BusinessError("UNAUTHENTICATED", "A valid active user is required", 401)
+                try:
+                    permissions = permissions_for_role(user.role)
+                except ValueError:
+                    raise BusinessError("UNAUTHENTICATED", "A valid active user is required", 401) from None
                 g.tenant_id = user.tenant_id
                 g.user_id = user.id
-        if {"tenant_id", "user_id", "role"} & request.args.keys():
+                g.role = user.role
+                g.permissions = permissions
+        if {"tenant_id", "user_id", "role", "permissions"} & request.args.keys():
             raise BusinessError("INVALID_ARGUMENT", "Identity must come from server-side authentication")
         g.db = app.extensions["session_factory"]()
 
@@ -80,7 +89,8 @@ def create_app(config=None):
         return jsonify({
             "user_id": g.user_id,
             "tenant_id": g.tenant_id,
-            "permissions": ["business:read", "orders:refund", "products:price"],
+            "role": g.role,
+            "permissions": sorted(g.permissions),
         })
 
     @app.errorhandler(BusinessError)

@@ -31,6 +31,7 @@ Timestamp = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:
 Month = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$"), AfterValidator(valid_month)]
 Period = Literal["today", "week", "month"]
 OrderStatus = Literal["pending", "paid", "shipped", "delivered", "refunded", "cancelled"]
+UserRole = Literal["viewer", "operator", "manager", "admin"]
 
 
 class Schema(BaseModel):
@@ -49,6 +50,7 @@ class ToolCall(Schema):
 class Identity(Schema):
     user_id: Identifier
     tenant_id: Identifier
+    role: UserRole
     permissions: list[str]
 
 
@@ -134,6 +136,11 @@ class RefundInput(OrderInput):
 
 class PriceInput(ProductInput):
     price: Price
+
+
+class RoleInput(Schema):
+    user_id: Identifier
+    role: UserRole
 
 
 class Item(Schema):
@@ -425,3 +432,8 @@ class RefundResult(Schema):
 class PriceResult(Schema):
     product: ProductOutput
     previous_price: Price
+
+
+class RoleResult(Schema):
+    user_id: Identifier
+    role: UserRole

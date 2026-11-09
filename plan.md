@@ -236,23 +236,25 @@ Do not accept `tenant_id` supplied by the Agent as authoritative.
 
 ### 3.2 Authorization
 
-Implement RBAC and parameter-level permission checks.
+Implement RBAC and parameter-level permission checks using this formal matrix:
 
-Example roles:
+| Role | `business:read` | `orders:refund` | `products:price` | `approvals:manager` | `approvals:admin` | `roles:manage` |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Viewer | Yes | No | No | No | No | No |
+| Operator | Yes | Yes | Yes | No | No | No |
+| Manager | Yes | Yes | Yes | Yes | No | No |
+| Admin | Yes | Yes | Yes | Yes | Yes | Yes |
 
-| Role | Permissions |
-|---|---|
-| Viewer | Read business data |
-| Operator | Read data and request sensitive operations |
-| Manager | Approve permitted high-risk operations |
-| Admin | Manage tenant permissions |
+`orders:refund` and `products:price` authorize submitting the operation. They do
+not bypass risk classification or prove that an approval exists. Manager and
+Admin approval permissions describe who may approve in Phase 4; they have no
+approval effect in Phase 3. Role administration is tenant-scoped and reserved
+to Admin. It changes role assignment only; it cannot create or imply an
+operation approval.
 
-Example policies:
-
-- Operators may request refunds only within permitted limits.
-- Managers may approve eligible refunds.
-- Product price reductions above a configured percentage require approval.
-- Cross-tenant access is always rejected.
+Every authenticated role may use tenant-scoped reads. Viewer is read-only.
+Operator, Manager, and Admin may directly execute only operations classified as
+MEDIUM. Cross-tenant access is always forbidden, including for Admin.
 
 ### 3.3 Risk Policy Engine
 
@@ -264,14 +266,60 @@ Classify operations:
 
 A risk policy determines whether an operation can execute immediately or must wait for approval.
 
+Money is represented as integer cents. The policy thresholds are inclusive and
+must be implemented without binary floating-point comparisons.
+
+| Operation | Boundary | Risk | Required permission | Approval requirement in Phase 4 | Phase 3 behavior |
+|---|---|---|---|---|---|
+| Refund | `1..10000` cents (up to and including ¥100) | MEDIUM | `orders:refund` | None | Execute after all business checks pass |
+| Refund | `10001..50000` cents (over ¥100 through ¥500) | HIGH | `orders:refund` | Manager or Admin | Fail closed with `APPROVAL_REQUIRED` |
+| Refund | More than `50000` cents (over ¥500) | HIGH | `orders:refund` | Admin only | Fail closed with `APPROVAL_REQUIRED` |
+| Price change | Absolute change at most 5%, inclusive | MEDIUM | `products:price` | None | Execute after all business checks pass |
+| Price change | Absolute change over 5% through 20%, inclusive | HIGH | `products:price` | Manager or Admin | Fail closed with `APPROVAL_REQUIRED` |
+| Price change | Absolute change over 20% | HIGH | `products:price` | Admin only | Fail closed with `APPROVAL_REQUIRED` |
+| Role change | Valid same-tenant user and role | HIGH | `roles:manage` | None specified | Admin may execute directly |
+
+For a current price `old` and requested price `new`, compare
+`abs(new - old) * 100` with `old * 5` and `old * 20`. This preserves exact
+integer boundary behavior for both increases and decreases.
+
+### 3.4 Policy Precedence and Security Boundaries
+
+The trusted backend applies checks in this order:
+
+1. Authenticate the bearer token and load the active database user.
+2. Derive `user_id`, `tenant_id`, role, and permissions from that user; ignore
+   identity or role claims in headers and reject such claims in arguments.
+3. Validate request structure and integer-cent parameter limits.
+4. Verify the role permission required to submit the operation.
+5. Resolve the resource using the authenticated tenant key. A resource in a
+   different tenant is unavailable and cannot be selected by an Admin.
+6. Recheck current business state and limits, including refundable balance,
+   product price constraints, and eligible order status.
+7. Classify risk using the exact boundaries above.
+8. Execute MEDIUM operations directly. For HIGH operations, require the exact
+   approval level from the table and fail closed with `APPROVAL_REQUIRED` until
+   Phase 4 supplies a valid, parameter-bound approval.
+
+Business-invalid operations take precedence over approval requirements once the
+resource is authorized and loaded. Approval authority never implies approval,
+and a requester will not be allowed to approve their own sensitive operation in
+Phase 4. Approval fields supplied early by clients are invalid arguments. No
+write operation is automatically retried, including approval-required requests
+and unknown write outcomes.
+
 Risk classification and permission checks must happen in trusted backend code, never solely in prompts.
 
 ### Acceptance Criteria
 
 - Unauthorized tool calls are rejected.
 - Tenant isolation is enforced across reads and writes.
-- High-risk actions cannot execute without approval.
+- Exact refund and price-change thresholds are covered by automated boundary tests.
+- High-risk actions fail closed and cannot execute without approval.
+- Manager/Admin authority alone cannot satisfy an approval requirement.
+- Business-invalid actions remain rejected before risk/approval decisions.
 - Direct backend requests cannot bypass policy enforcement.
+- Existing no-automatic-write-retry behavior remains intact.
 
 ---
 

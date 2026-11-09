@@ -96,7 +96,7 @@ def test_refund_exceeding_remaining_balance(client, auth_a, paid_order):
     assert client.get(path.removesuffix("/refund"), headers=auth_a).get_json()["refunded_amount"] == 100
 
 
-@pytest.mark.parametrize("price", [1, 12345, MAX_PRICE])
+@pytest.mark.parametrize("price", [28405, 30000, 31395])
 def test_price_change_updates_reads(client, auth_a, price):
     response = client.patch("/v1/products/SHOE-WH-42/price", headers=auth_a, json={"price": price})
     assert response.status_code == 200
@@ -141,7 +141,7 @@ def test_missing_resources(client, auth_a):
 
 def test_restart_preserves_changes_and_item_prices(client, app, app_module, auth_a, paid_order):
     sku = paid_order["items"][0]["sku"]
-    assert client.patch(f"/v1/products/{sku}/price", headers=auth_a, json={"price": 123}).status_code == 200
+    assert client.patch(f"/v1/products/{sku}/price", headers=auth_a, json={"price": 30000}).status_code == 200
     assert client.post(f"/v1/orders/{paid_order['order_id']}/refund", headers=auth_a,
                        json={"amount": 500}).status_code == 201
     with app.extensions["session_factory"]() as session:
@@ -150,7 +150,7 @@ def test_restart_preserves_changes_and_item_prices(client, app, app_module, auth
     restarted = app_module.create_app(dict(app.config))
     try:
         restarted_client = restarted.test_client()
-        assert restarted_client.get(f"/v1/products/{sku}/stats", headers=auth_a).get_json()["price"] == 123
+        assert restarted_client.get(f"/v1/products/{sku}/stats", headers=auth_a).get_json()["price"] == 30000
         order = restarted_client.get(f"/v1/orders/{paid_order['order_id']}", headers=auth_a).get_json()
         assert order["refunded_amount"] == 500
         assert order["items"] == paid_order["items"]
@@ -187,7 +187,7 @@ def test_price_rolls_back_on_commit_failure(client, app, auth_a):
     engine = app.extensions["database"]
     event.listen(engine, "commit", fail_commit)
     try:
-        response = client.patch("/v1/products/SHOE-WH-42/price", headers=auth_a, json={"price": 100})
+        response = client.patch("/v1/products/SHOE-WH-42/price", headers=auth_a, json={"price": 30000})
     finally:
         event.remove(engine, "commit", fail_commit)
     assert response.status_code == 500

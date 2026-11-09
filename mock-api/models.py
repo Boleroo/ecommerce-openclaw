@@ -25,10 +25,14 @@ class Tenant(Base):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint("role IN ('viewer', 'operator', 'manager', 'admin')", name="valid_user_role"),
+    )
 
     id = Column(String, primary_key=True)
     tenant_id = Column(String, ForeignKey("tenants.id"), nullable=False)
     name = Column(String, nullable=False)
+    role = Column(String, nullable=False, default="operator")
     active = Column(Boolean, nullable=False, default=True)
 
 

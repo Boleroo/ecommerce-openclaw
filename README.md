@@ -40,10 +40,10 @@ without a valid tenant can also be recorded.
 On first initialization, two tenants receive distinct products, inventory,
 customers, and 90 days of orders ending on the initialization date:
 
-| Tenant | User | Product/order identifiers |
-| --- | --- | --- |
-| `merchant-12345` | `user-a` | Original SKUs; `JDYYYYMMDDnnnn` orders |
-| `merchant-67890` | `user-b` | `B-` prefixed SKUs and orders |
+| Tenant | User | Default role | Product/order identifiers |
+| --- | --- | --- | --- |
+| `merchant-12345` | `user-a` | Operator | Original SKUs; `JDYYYYMMDDnnnn` orders |
+| `merchant-67890` | `user-b` | Operator | `B-` prefixed SKUs and orders |
 
 Seeding runs transactionally and skips tenants that already exist. Restarting
 does not overwrite prices, refunds, orders, or customer snapshots. Reads query
@@ -86,10 +86,9 @@ credentials for compatibility with unchanged Skills. That mode is suitable only
 for public demo data; use strict mode for tenant isolation of private data.
 Invalid supplied credentials never fall back to anonymous access.
 
-This is a minimal local authentication adapter needed for Phase 1 isolation.
-RBAC, risk policies, approval enforcement, and production authentication are not
-implemented. Every authenticated active user can perform these Phase 1 writes
-within their own tenant.
+This remains a local authentication adapter rather than production identity
+infrastructure. Phase 3 RBAC and risk policies are enforced in the trusted
+backend. Approval execution and idempotency remain deferred.
 
 ## Write APIs
 
@@ -133,6 +132,7 @@ HTTP 200 with `product` and `previous_price`.
 | --- | --- |
 | 400 | `INVALID_ARGUMENT`, `PRICE_OUT_OF_RANGE` |
 | 401 | `UNAUTHENTICATED` |
+| 403 | `PERMISSION_DENIED`, `APPROVAL_REQUIRED` |
 | 404 | `RESOURCE_NOT_FOUND` |
 | 409 | `INVALID_BUSINESS_STATE`, `REFUND_AMOUNT_EXCEEDED` |
 | 500 | `INTERNAL_ERROR` |
@@ -202,16 +202,15 @@ It obtains user ID, tenant ID, and capabilities from the new authenticated
 every precheck and business request. There is no privileged fallback token and
 no dispatcher access to the business database.
 
-Phase 1 grants every active user `business:read`, `orders:refund`, and
-`products:price` within their own tenant. The context endpoint reports those
-existing capabilities; the dispatcher checks each registry entry's required
-permissions. Role management and risk-based approval enforcement remain future
-work. The backend independently rechecks authentication, tenant ownership, and
-business rules on every request, including changes after dispatcher prechecks.
+The context endpoint reports the persisted role and its server-derived
+permissions; the dispatcher checks each registry entry's required permissions.
+The backend independently rechecks authentication, role permissions, tenant
+ownership, business rules, and risk policy on every request, including changes
+after dispatcher prechecks.
 
 ### Registered tools
 
-All 21 existing business endpoints are registered; health and authentication
+All 22 business endpoints are registered; health and authentication
 context are infrastructure endpoints, not business tools.
 
 | Area | Tool names |
@@ -221,11 +220,32 @@ context are infrastructure endpoints, not business tools.
 | Inventory | `inventory_summary`, `inventory_alerts`, `inventory_sku`, `restock_suggestions` |
 | Customers | `customers_summary`, `customers_retention`, `customers_geo`, `list_customers` |
 | Analytics | `analytics_revenue`, `analytics_trend`, `analytics_refunds`, `analytics_category`, `analytics_aov` |
+| Administration | `change_user_role` |
 
 Read tools require `business:read` and have LOW risk metadata. Refunds require
 `orders:refund`; price updates require `products:price`; both also require read
-permission for prechecks and have HIGH risk metadata. HIGH does not imply an
-approval gate in Phase 2. Existing authorized write behavior is preserved.
+permission for prechecks and have DYNAMIC risk metadata. Role changes require
+`roles:manage` and have HIGH risk metadata.
+
+### Phase 3 RBAC and risk policy
+
+Viewer is read-only. Operator can submit refunds and price changes. Manager adds
+manager-level approval authority, and Admin adds admin-level approval authority
+plus tenant-scoped role management. Approval authority is metadata for Phase 4;
+it never proves that an operation was approved. Admin cannot access another
+tenant's users or business resources.
+
+Refunds through ¥100 (10,000 cents) execute directly for Operator, Manager, or
+Admin. Refunds over ¥100 through ¥500 require Manager/Admin approval; larger
+refunds require Admin approval. Absolute price changes through 5% execute
+directly; changes over 5% through 20% require Manager/Admin approval; larger
+changes require Admin approval. Price percentages use exact integer comparisons.
+
+Because approval execution is not implemented yet, every approval-required
+operation fails closed with `APPROVAL_REQUIRED`, including requests initiated by
+Manager or Admin. Business state and amount constraints are checked first, so an
+approval requirement cannot make an invalid operation valid. The backend does
+not accept client-supplied approval claims.
 
 ### Validation and observations
 
@@ -280,8 +300,8 @@ POST/PATCH requests are sent at most once per execution. A lost response,
 infrastructure error, invalid write response, or failed postcondition returns
 non-recoverable `WRITE_OUTCOME_UNKNOWN`. The caller must inspect persisted state
 and resolve the outcome manually before another write. Known business rejections
-retain their specific codes. Approval errors can be passed through as
-non-recoverable observations, but this does not implement approval processing.
+retain their specific codes. Approval-required results are non-recoverable and
+do not implement approval processing.
 
 `dispatcher/audit.py` records one durable `tool_executions` row per invocation,
 including validation/authentication failures. It stores the trace, registered
@@ -298,8 +318,9 @@ both services. Pending rows require manual investigation.
 
 - Existing direct Flask routes remain accessible and independently authorized;
   Agent network restriction and Skill migration belong to later phases.
-- No RBAC administration, risk-policy engine, approval gates, idempotency,
-  automatic reconciliation, or LLM-specific integration is implemented.
+- No approval execution, requester/approver workflow, idempotency, automatic
+  reconciliation, production identity provider, or LLM-specific integration is
+  implemented. Approval-required operations therefore fail closed.
 - Unknown write outcomes cannot be resolved automatically without the later
   idempotency work. Never blindly retry a partial refund.
 - Schemas intentionally constrain supported tool inputs more strictly than

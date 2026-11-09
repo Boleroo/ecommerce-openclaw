@@ -63,7 +63,9 @@ def seed_database(app):
             profile, customers, names = customer_fixture(today, second_tenant)
             session.add(Tenant(id=tenant_id, name=name, customer_profile=profile, customers=customers))
             session.flush()
-            session.add(User(id=user_id, tenant_id=tenant_id, name=name + "操作员"))
+            session.add(User(
+                id=user_id, tenant_id=tenant_id, name=name + "操作员", role="operator",
+            ))
             catalog = []
             for position, fixture in enumerate(PRODUCTS):
                 product = dict(fixture)

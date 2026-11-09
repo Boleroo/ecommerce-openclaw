@@ -19,7 +19,7 @@ from dispatcher.schemas import OrderOutput, ProductOutput, RefundOutput
 from models import Order, Refund, User
 
 
-IDENTITY = {"user_id": "user-a", "tenant_id": "merchant-12345", "permissions": ["business:read", "orders:refund", "products:price"]}
+IDENTITY = {"user_id": "user-a", "tenant_id": "merchant-12345", "role": "operator", "permissions": ["business:read", "orders:refund", "products:price"]}
 PRODUCTS = {"total": 0, "page": 1, "page_size": 20, "products": []}
 
 
@@ -65,16 +65,16 @@ def assert_failure(observation, code, recoverable=None):
 
 def test_registry_matches_every_business_route(app):
     original_business_routes = {
-        (method, rule.rule.replace("<order_id>", "{order_id}").replace("<sku>", "{sku}"))
+        (method, rule.rule.replace("<order_id>", "{order_id}").replace("<sku>", "{sku}").replace("<user_id>", "{user_id}"))
         for rule in app.url_map.iter_rules()
         if rule.rule.startswith("/v1/") and rule.rule != "/v1/auth/context"
         for method in rule.methods - {"HEAD", "OPTIONS"}
     }
     assert {(tool.method, tool.endpoint) for tool in REGISTRY.tools.values()} == original_business_routes
-    assert len(REGISTRY.tools) == 21
+    assert len(REGISTRY.tools) == 22
     for description in REGISTRY.describe():
         assert description["required_permissions"]
-        assert description["risk_level"] in ("LOW", "HIGH")
+        assert description["risk_level"] in ("LOW", "HIGH", "DYNAMIC")
         for schema in (description["input_schema"], description["output_schema"]):
             Draft202012Validator.check_schema(schema)
             assert schema["additionalProperties"] is False
@@ -101,7 +101,12 @@ def test_all_registered_tools_against_real_backend(dispatcher, audit, app, paid_
     if name == "refund_order":
         arguments.update(amount=100, reason="return")
     if name == "change_price":
-        arguments["price"] = 12345
+        arguments["price"] = (31000 if prefix else 30000)
+    if name == "change_user_role":
+        user_id = "user-b" if prefix else "user-a"
+        with app.extensions["session_factory"].begin() as session:
+            session.get(User, user_id).role = "admin"
+        arguments.update(user_id=user_id, role="admin")
     observation = dispatcher.execute(name, arguments, token=token)
     assert observation.success, observation.model_dump()
     assert observation.error is None
@@ -113,7 +118,8 @@ def test_all_registered_tools_against_real_backend(dispatcher, audit, app, paid_
     assert record["success"] == 1
     assert record["tenant_id"] == ("merchant-67890" if prefix else "merchant-12345")
     assert record["user_id"] == ("user-b" if prefix else "user-a")
-    assert len(record["requests"]) == (3 if tool.method != "GET" else 2)
+    expected_requests = 2 if tool.method == "GET" or name == "change_user_role" else 3
+    assert len(record["requests"]) == expected_requests
     assert token not in json.dumps(record)
 
 
@@ -329,7 +335,7 @@ def test_business_failure_in_write_response_is_not_retried(audit, paid_order):
 
 @pytest.mark.parametrize("tool, arguments, method", [
     ("refund_order", {"order_id": "TEST-PAID", "amount": 100}, "POST"),
-    ("change_price", {"sku": "SHOE-WH-42", "price": 123}, "PATCH"),
+    ("change_price", {"sku": "SHOE-WH-42", "price": 30000}, "PATCH"),
 ])
 def test_conflicting_500_after_real_write_is_always_unknown(backend, audit, monkeypatch, paid_order, tool, arguments, method):
     actual_request = backend.request
@@ -545,7 +551,7 @@ def test_price_response_checks_never_replay_a_write(backend, audit, app, monkeyp
         return response
 
     monkeypatch.setattr(backend, "request", corrupt_price_result)
-    observation = Dispatcher(backend, audit).execute("change_price", {"sku": "SHOE-WH-42", "price": 123}, token="test-a")
+    observation = Dispatcher(backend, audit).execute("change_price", {"sku": "SHOE-WH-42", "price": 30000}, token="test-a")
     assert_failure(observation, "WRITE_OUTCOME_UNKNOWN", False)
     assert len(writes) == 1
 
@@ -569,7 +575,7 @@ def test_concurrent_executions_keep_identity_and_trace_separate(dispatcher, audi
 def test_gateway_catalog_execution_and_trace(backend, audit, auth_a):
     gateway = create_gateway({"TESTING": True}, backend=backend, audit=audit).test_client()
     catalog = gateway.get("/tools").get_json()
-    assert len(catalog["tools"]) == 21
+    assert len(catalog["tools"]) == 22
     Draft202012Validator.check_schema(catalog["observation_schema"])
     response = gateway.post("/tools/execute", headers={**auth_a, "X-Request-ID": "forged", "X-Tenant-ID": "merchant-67890"},
                             json={"tool": "list_products", "arguments": {}})

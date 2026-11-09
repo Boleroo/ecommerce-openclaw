@@ -149,7 +149,7 @@ def test_same_resource_identifiers_remain_isolated(client, app, auth_a, auth_b, 
         session.add(Product(tenant_id="merchant-67890", **product.to_dict(), stock=1, threshold=1, daily_avg=1))
         order_data = {key: value for key, value in paid_order.items() if key != "remaining_refundable_amount"}
         session.add(Order(tenant_id="merchant-67890", **order_data))
-    assert client.patch("/v1/products/SHOE-WH-42/price", headers=auth_b, json={"price": 123}).status_code == 200
+    assert client.patch("/v1/products/SHOE-WH-42/price", headers=auth_b, json={"price": 30000}).status_code == 200
     assert client.post(f"/v1/orders/{paid_order['order_id']}/refund", headers=auth_b,
                        json={"amount": 100}).status_code == 201
     assert client.get("/v1/products/SHOE-WH-42/stats", headers=auth_a).get_json()["price"] == 29900
@@ -235,7 +235,7 @@ def test_second_tenant_can_write_without_affecting_first(client, app, auth_a, au
     assert client.post(f"/v1/orders/{order_b['order_id']}/refund", headers=auth_b,
                        json={"amount": 100}).status_code == 201
     assert client.patch("/v1/products/B-SHOE-WH-42/price", headers=auth_b,
-                        json={"price": 12345}).status_code == 200
-    assert client.get("/v1/products/B-SHOE-WH-42/stats", headers=auth_b).get_json()["price"] == 12345
+                        json={"price": 31000}).status_code == 200
+    assert client.get("/v1/products/B-SHOE-WH-42/stats", headers=auth_b).get_json()["price"] == 31000
     assert client.get("/v1/products/SHOE-WH-42/stats", headers=auth_a).get_json()["price"] == 29900
     assert client.get("/v1/analytics/refunds?period=today", headers=auth_a).get_json() == before_a

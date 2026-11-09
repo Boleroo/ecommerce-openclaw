@@ -333,7 +333,7 @@ def test_audit_write_faults_never_replay(audit_stack, fault, timing, operation):
     else:
         audit_stack.transport.after = fail_after
     tool = "refund_order" if operation == "refund" else "change_price"
-    arguments = {"order_id": "AUDIT-A", "amount": 100} if operation == "refund" else {"sku": "AUDIT-A", "price": 900}
+    arguments = {"order_id": "AUDIT-A", "amount": 100} if operation == "refund" else {"sku": "AUDIT-A", "price": 950}
     observation = assert_observation(audit_stack.execute(tool, arguments), "WRITE_OUTCOME_UNKNOWN", False)
     assert audit_stack.transport.calls.count((method, endpoint)) == 1
     assert audit_stack.sleeps == []
@@ -344,7 +344,7 @@ def test_audit_write_faults_never_replay(audit_stack, fault, timing, operation):
         assert audit_stack.ledger() == ((1000, 100, "paid"), [(100, "user-a")])
     else:
         with closing(sqlite3.connect(audit_stack.database_path)) as connection:
-            assert connection.execute("SELECT price FROM products WHERE tenant_id='merchant-12345' AND sku='AUDIT-A'").fetchone() == (900,)
+            assert connection.execute("SELECT price FROM products WHERE tenant_id='merchant-12345' AND sku='AUDIT-A'").fetchone() == (950,)
         assert audit_stack.ledger() == ((1000, 0, "paid"), [])
 
 
