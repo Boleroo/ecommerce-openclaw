@@ -1,7 +1,24 @@
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+
+
+def valid_day(value):
+    date.fromisoformat(value)
+    return value
+
+
+def valid_timestamp(value):
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.utcoffset() is None:
+        raise ValueError("Timestamp must include a timezone")
+    return value
+
+
+def valid_month(value):
+    date.fromisoformat(f"{value}-01")
+    return value
 
 
 Identifier = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")]
@@ -9,7 +26,9 @@ Positive = Annotated[int, Field(gt=0)]
 Nonnegative = Annotated[int, Field(ge=0)]
 Price = Annotated[int, Field(ge=1, le=100_000_000)]
 Ratio = Annotated[float, Field(ge=0, le=1)]
-Day = Annotated[str, Field(pattern=r"^\d{4}-\d{2}-\d{2}$")]
+Day = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$", json_schema_extra={"format": "date"}), AfterValidator(valid_day)]
+Timestamp = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-]([01][0-9]|2[0-3]):[0-5][0-9])$", json_schema_extra={"format": "date-time"}), AfterValidator(valid_timestamp)]
+Month = Annotated[str, Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$"), AfterValidator(valid_month)]
 Period = Literal["today", "week", "month"]
 OrderStatus = Literal["pending", "paid", "shipped", "delivered", "refunded", "cancelled"]
 
@@ -36,12 +55,6 @@ class Identity(Schema):
 class DateRange(Schema):
     start_date: Day = Field(default_factory=lambda: date.today().isoformat())
     end_date: Day = Field(default_factory=lambda: date.today().isoformat())
-
-    @field_validator("start_date", "end_date")
-    @classmethod
-    def valid_date(cls, value):
-        date.fromisoformat(value)
-        return value
 
     @model_validator(mode="after")
     def ordered_dates(self):
@@ -137,7 +150,7 @@ class Logistics(Schema):
 
 class OrderOutput(Schema):
     order_id: Identifier
-    created_at: str
+    created_at: Timestamp
     status: OrderStatus
     customer_name: str
     total_amount: Positive
@@ -297,7 +310,7 @@ class CustomerSummaryOutput(Schema):
 
 
 class Cohort(Schema):
-    month: Annotated[str, Field(pattern=r"^\d{4}-\d{2}$")]
+    month: Month
     acquired: Nonnegative
     retained_pct: Ratio
 
@@ -397,11 +410,11 @@ class AverageOutput(Schema):
 
 
 class RefundOutput(Schema):
-    id: str
+    id: Identifier
     order_id: Identifier
     amount: Positive
-    reason: str
-    created_at: str
+    reason: Annotated[str, Field(max_length=500)]
+    created_at: Timestamp
 
 
 class RefundResult(Schema):

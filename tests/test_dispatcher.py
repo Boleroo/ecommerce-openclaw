@@ -1,10 +1,11 @@
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from uuid import UUID
 
 import httpx
 import pytest
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
@@ -14,7 +15,7 @@ from dispatcher.dispatcher import Dispatcher, RetryPolicy
 from dispatcher.gateway import create_app as create_gateway
 from dispatcher.observation import Observation
 from dispatcher.registry import REGISTRY, ToolRegistry
-from dispatcher.schemas import OrderOutput
+from dispatcher.schemas import OrderOutput, ProductOutput, RefundOutput
 from models import Order, Refund, User
 
 
@@ -324,6 +325,100 @@ def test_business_failure_in_write_response_is_not_retried(audit, paid_order):
     observation = Dispatcher(backend, audit).execute("refund_order", {"order_id": "TEST-PAID", "amount": 100}, token="test-a")
     assert_failure(observation, "REFUND_AMOUNT_EXCEEDED", False)
     assert len(backend.calls) == 3
+
+
+@pytest.mark.parametrize("tool, arguments, method", [
+    ("refund_order", {"order_id": "TEST-PAID", "amount": 100}, "POST"),
+    ("change_price", {"sku": "SHOE-WH-42", "price": 123}, "PATCH"),
+])
+def test_conflicting_500_after_real_write_is_always_unknown(backend, audit, monkeypatch, paid_order, tool, arguments, method):
+    actual_request = backend.request
+    writes = []
+
+    def replace_committed_response(request_method, endpoint, **kwargs):
+        response = actual_request(request_method, endpoint, **kwargs)
+        if request_method == method:
+            writes.append(endpoint)
+            return BackendResponse(500, {"code": "INVALID_ARGUMENT"})
+        return response
+
+    monkeypatch.setattr(backend, "request", replace_committed_response)
+    observation = Dispatcher(backend, audit).execute(tool, arguments, token="test-a")
+    assert_failure(observation, "WRITE_OUTCOME_UNKNOWN", False)
+    assert len(writes) == 1
+
+
+@pytest.mark.parametrize("body", [
+    {"code": "RATE_LIMITED", "message": "wait"},
+    {"code": "DATABASE_BUSY", "message": "wait"},
+])
+def test_structured_rate_limits_follow_bounded_read_retry(audit, body):
+    limited = BackendResponse(429, body)
+    backend = SequenceBackend([BackendResponse(200, IDENTITY), limited, limited, limited])
+    sleeps = []
+    observation = Dispatcher(backend, audit, sleep=sleeps.append).execute("list_products", {}, token="test-a")
+    assert_failure(observation, "UPSTREAM_UNAVAILABLE", True)
+    assert len(backend.calls) == 4
+    assert sleeps == [0.1, 0.2]
+
+
+@pytest.mark.parametrize("model, field, value", [
+    (ProductOutput, "listed_at", "2026-02-30"),
+    (RefundOutput, "created_at", "2026-01-01T12:00:00"),
+    (RefundOutput, "created_at", "not-a-timestamp"),
+    (RefundOutput, "id", ""),
+])
+def test_business_output_fields_reject_invalid_dates_and_identifiers(model, field, value, paid_order):
+    product = {"sku": "SKU-1", "name": "name", "category": "category", "price": 100, "status": "on_sale", "listed_at": "2026-01-01"}
+    refund = {"id": "refund-1", "order_id": paid_order["order_id"], "amount": 100, "reason": "", "created_at": paid_order["created_at"]}
+    with pytest.raises(ValidationError):
+        model.model_validate({**(product if model is ProductOutput else refund), field: value})
+
+
+def test_date_contracts_publish_machine_checkable_formats():
+    product_schema = ProductOutput.model_json_schema()
+    refund_schema = RefundOutput.model_json_schema()
+    assert product_schema["properties"]["listed_at"]["format"] == "date"
+    assert refund_schema["properties"]["created_at"]["format"] == "date-time"
+    checker = FormatChecker()
+    Draft202012Validator(product_schema, format_checker=checker).validate({
+        "sku": "SKU-1", "name": "name", "category": "category", "price": 100,
+        "status": "on_sale", "listed_at": "2026-01-01",
+    })
+
+
+@pytest.mark.parametrize("tool, arguments, response_key, field, replacement", [
+    ("list_orders", {"status": "paid"}, "orders", "status", "pending"),
+    ("list_orders", {"keyword": "TEST-PAID"}, "orders", "order_id", "OTHER"),
+    ("list_products", {"category": "运动鞋"}, "products", "category", "other"),
+    ("list_products", {"keyword": "SHOE-WH-42"}, "products", "sku", "OTHER"),
+])
+def test_list_results_must_match_requested_filters(backend, audit, monkeypatch, paid_order, tool, arguments, response_key, field, replacement):
+    actual_request = backend.request
+
+    def corrupt_result(method, endpoint, **kwargs):
+        response = actual_request(method, endpoint, **kwargs)
+        if endpoint in ("/v1/orders", "/v1/products"):
+            response.body[response_key][0][field] = replacement
+        return response
+
+    monkeypatch.setattr(backend, "request", corrupt_result)
+    observation = Dispatcher(backend, audit).execute(tool, arguments, token="test-a")
+    assert_failure(observation, "INVALID_BACKEND_RESPONSE", False)
+
+
+def test_unexpected_failures_record_sanitized_diagnostics(audit, caplog):
+    backend = SequenceBackend([
+        BackendResponse(200, IDENTITY), RuntimeError("private-token-value"),
+    ])
+    with caplog.at_level(logging.ERROR):
+        observation = Dispatcher(backend, audit).execute("list_products", {}, token="test-a")
+    assert_failure(observation, "INTERNAL_ERROR", False)
+    record = audit.get(observation.trace_id)
+    assert record["requests"][-1]["outcome"] == "INTERNAL_ERROR"
+    assert observation.trace_id in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "private-token-value" not in caplog.text
 
 
 def test_response_amount_cannot_silently_change(audit, paid_order):

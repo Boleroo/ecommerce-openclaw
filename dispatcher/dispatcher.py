@@ -1,3 +1,4 @@
+import logging
 import time
 from dataclasses import dataclass, field
 from uuid import uuid4
@@ -9,6 +10,9 @@ from .observation import Observation, ToolFailure, make_error
 from .registry import REGISTRY
 from .schemas import Identity, ToolCall
 from .validator import TRANSIENT_CODES, validate_postconditions, validate_response
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -51,7 +55,8 @@ class Dispatcher:
         audited_name = tool_name if self.registry.get(tool_name) else "<unknown>"
         try:
             self.audit.start(state.trace_id, audited_name)
-        except Exception:
+        except Exception as failure:
+            self._log_exception(state, "audit_start", failure)
             return self._failure(tool_name, state, "AUDIT_UNAVAILABLE")
         try:
             call = ToolCall.model_validate(payload)
@@ -78,15 +83,20 @@ class Dispatcher:
                 success=True, tool=call.tool, error=None,
                 data=result.model_dump(mode="json"), trace_id=state.trace_id,
             )
-        except ValidationError:
-            observation = self._failure(tool_name, state, "INVALID_ARGUMENT")
+        except ValidationError as failure:
+            code = "WRITE_OUTCOME_UNKNOWN" if state.write_attempted else "INVALID_ARGUMENT"
+            if state.write_attempted:
+                self._log_exception(state, "write_validation", failure)
+            observation = self._failure(tool_name, state, code)
         except ToolFailure as failure:
             observation = self._failure(tool_name, state, failure.error.code)
-        except Exception:
+        except Exception as failure:
+            self._log_exception(state, "dispatch", failure)
             observation = self._failure(tool_name, state, "WRITE_OUTCOME_UNKNOWN" if state.write_attempted else "INTERNAL_ERROR")
         try:
             self.audit.finish(observation, state.identity, state.requests)
-        except Exception:
+        except Exception as failure:
+            self._log_exception(state, "audit_finish", failure)
             return self._failure(tool_name, state, "WRITE_OUTCOME_UNKNOWN" if state.write_attempted else "AUDIT_UNAVAILABLE")
         return observation
 
@@ -132,8 +142,9 @@ class Dispatcher:
                 attempt["outcome"] = "dispatch_pending"
                 try:
                     self.audit.checkpoint(state.trace_id, state.identity, state.requests)
-                except Exception:
+                except Exception as failure:
                     attempt["outcome"] = "AUDIT_UNAVAILABLE"
+                    self._log_exception(state, "audit_checkpoint", failure)
                     raise ToolFailure("AUDIT_UNAVAILABLE") from None
                 state.write_attempted = True
             try:
@@ -142,13 +153,20 @@ class Dispatcher:
                     params=params, json_body=json_body,
                 )
                 attempt["status"] = response.status_code
-                result = validate_response(response, output_model, success_status)
+                result = validate_response(
+                    response, output_model, success_status, is_write=method != "GET",
+                )
                 attempt["outcome"] = "validated"
                 return result
             except BackendTransportError as failure:
                 error = ToolFailure(failure.code)
             except ToolFailure as failure:
                 error = failure
+            except Exception as failure:
+                code = "WRITE_OUTCOME_UNKNOWN" if method != "GET" else "INTERNAL_ERROR"
+                attempt["outcome"] = code
+                self._log_exception(state, "backend_request", failure)
+                raise
             attempt["outcome"] = error.error.code
             if method != "GET" and error.error.category in ("INFRASTRUCTURE", "RESPONSE"):
                 raise ToolFailure("WRITE_OUTCOME_UNKNOWN") from None
@@ -158,3 +176,10 @@ class Dispatcher:
                 self.sleep(delay)
                 continue
             raise error
+
+    @staticmethod
+    def _log_exception(state, stage, failure):
+        logger.error(
+            "tool execution exception trace_id=%s stage=%s exception_type=%s",
+            state.trace_id, stage, type(failure).__name__,
+        )

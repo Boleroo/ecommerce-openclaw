@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 from flask import Flask, jsonify, request
-from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.exceptions import BadRequest, RequestEntityTooLarge, UnsupportedMediaType
 
 from .audit import SQLiteAuditStore
 from .backend_client import HTTPBackendClient
@@ -55,7 +55,11 @@ def create_app(config=None, *, backend=None, audit=None):
     def execute_tool():
         scheme, separator, token = request.headers.get("Authorization", "").partition(" ")
         credential = token if separator and scheme.lower() == "bearer" else None
-        return observation_response(dispatcher.dispatch(request.get_json(silent=True), token=credential))
+        try:
+            payload = request.get_json(silent=False)
+        except (BadRequest, UnsupportedMediaType, RecursionError):
+            payload = None
+        return observation_response(dispatcher.dispatch(payload, token=credential))
 
     @app.errorhandler(RequestEntityTooLarge)
     def oversized_request(error):

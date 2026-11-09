@@ -5,9 +5,16 @@ from .observation import ERRORS, ToolFailure
 
 TRANSIENT_CODES = {"UPSTREAM_TIMEOUT", "UPSTREAM_UNAVAILABLE", "DATABASE_BUSY"}
 LEGACY_CODES = {40401: "RESOURCE_NOT_FOUND", 40402: "RESOURCE_NOT_FOUND", 40403: "RESOURCE_NOT_FOUND"}
+WRITE_REJECTIONS = {
+    "INVALID_ARGUMENT": 400, "PRICE_OUT_OF_RANGE": 400,
+    "RESOURCE_NOT_FOUND": 404, "INVALID_BUSINESS_STATE": 409,
+    "REFUND_AMOUNT_EXCEEDED": 409,
+}
 
 
-def validate_response(response, output_model, success_status=200):
+def validate_response(response, output_model, success_status=200, *, is_write=False):
+    if is_write and response.status_code not in (success_status, 400, 401, 403, 404, 409):
+        raise ToolFailure("WRITE_OUTCOME_UNKNOWN")
     if response.status_code == 401:
         raise ToolFailure("UNAUTHENTICATED")
     if response.status_code == 403:
@@ -20,7 +27,12 @@ def validate_response(response, output_model, success_status=200):
         if type(code) is int:
             code = LEGACY_CODES.get(code)
         if isinstance(code, str) and code in ERRORS:
-            raise ToolFailure(code)
+            if is_write and WRITE_REJECTIONS.get(code) != response.status_code:
+                raise ToolFailure("WRITE_OUTCOME_UNKNOWN")
+            if response.status_code != 429 or not ERRORS[code][2]:
+                raise ToolFailure(code)
+        if response.status_code == 429:
+            raise ToolFailure("UPSTREAM_UNAVAILABLE")
         if "code" in body or body.get("success") is False or body.get("error") is not None:
             raise ToolFailure("INVALID_BACKEND_RESPONSE")
     if response.status_code in (429, 502, 503, 504):
@@ -50,6 +62,27 @@ def validate_postconditions(tool, arguments, result, before=None):
         entries = getattr(result, "orders", getattr(result, "products", getattr(result, "customers", [])))
         if result.page != arguments.page or result.page_size != arguments.page_size or len(entries) > result.page_size or len(entries) > result.total:
             raise ToolFailure("INVALID_BACKEND_RESPONSE")
+    if tool.name == "list_orders":
+        for order in result.orders:
+            if arguments.status and order.status != arguments.status:
+                raise ToolFailure("INVALID_BACKEND_RESPONSE")
+            if not arguments.start_date <= order.created_at[:10] <= arguments.end_date:
+                raise ToolFailure("INVALID_BACKEND_RESPONSE")
+            if arguments.keyword and not any(arguments.keyword.lower() in value.lower() for value in [order.order_id, *(item.name for item in order.items)]):
+                raise ToolFailure("INVALID_BACKEND_RESPONSE")
+        field = "total_amount" if arguments.sort == "amount_desc" else "created_at"
+        validate_ordering(result.orders, field, arguments.sort != "created_asc")
+    if tool.name == "list_products":
+        for product in result.products:
+            if arguments.status != "all" and product.status != arguments.status:
+                raise ToolFailure("INVALID_BACKEND_RESPONSE")
+            if arguments.category and product.category != arguments.category:
+                raise ToolFailure("INVALID_BACKEND_RESPONSE")
+            if arguments.keyword and not any(arguments.keyword.lower() in value.lower() for value in (product.sku, product.name)):
+                raise ToolFailure("INVALID_BACKEND_RESPONSE")
+    if tool.name == "list_customers":
+        field = {"last_order_desc": "last_order_date", "total_spent_desc": "total_spent", "order_count_desc": "total_orders"}[arguments.sort]
+        validate_ordering(result.customers, field, True)
     if tool.name == "order_stats":
         if result.period.start != arguments.start_date or result.period.end != arguments.end_date or sum(result.by_status.model_dump().values()) != result.total_orders:
             raise ToolFailure("INVALID_BACKEND_RESPONSE")
@@ -57,8 +90,10 @@ def validate_postconditions(tool, arguments, result, before=None):
         raise ToolFailure("INVALID_BACKEND_RESPONSE")
     if tool.name == "analytics_aov" and (result.days != arguments.days or len(result.points) != arguments.days):
         raise ToolFailure("INVALID_BACKEND_RESPONSE")
-    if tool.name == "product_ranking" and len(result.ranking) > arguments.limit:
-        raise ToolFailure("INVALID_BACKEND_RESPONSE")
+    if tool.name == "product_ranking":
+        if len(result.ranking) > arguments.limit or [item.rank for item in result.ranking] != list(range(1, len(result.ranking) + 1)):
+            raise ToolFailure("INVALID_BACKEND_RESPONSE")
+        validate_ordering(result.ranking, "sales_count" if arguments.sort.startswith("sales") else "revenue", arguments.sort.endswith("desc"))
     if tool.name == "change_price" and result.product.price != arguments.price:
         raise ToolFailure("INVALID_BACKEND_RESPONSE")
     if tool.name == "refund_order":
@@ -69,3 +104,9 @@ def validate_postconditions(tool, arguments, result, before=None):
         for field in ("total_amount", "items", "customer_name", "created_at", "logistics"):
             if getattr(result.order, field) != getattr(before, field):
                 raise ToolFailure("INVALID_BACKEND_RESPONSE")
+
+
+def validate_ordering(entries, field, reverse):
+    values = [getattr(entry, field) for entry in entries]
+    if values != sorted(values, reverse=reverse):
+        raise ToolFailure("INVALID_BACKEND_RESPONSE")

@@ -468,3 +468,113 @@ incorrect recoverability advice. No such feature was implemented during the audi
    focused cases for the chosen fixes and document remaining operational risks.
 
 Production fixes are intentionally not applied. Await the user's next instruction.
+
+## 2026-11-08 — A01–A08 focused bug-fix pass
+
+### Scope and verification
+
+Applied only the confirmed Phase 1/Phase 2 audit fixes. Phase 3 approval,
+idempotency, expanded RBAC, and Agent integration remain untouched. Existing
+Flask routes, bearer-token tenant authentication, and the 21-tool registry stay
+backward compatible. No tests were deleted, skipped, marked xfail, or weakened.
+
+Verification results:
+
+| Run | Passed | Failed | Total |
+| --- | ---: | ---: | ---: |
+| Previously existing tests | 360 | 0 | 360 |
+| New focused regression cases | 14 | 0 | 14 |
+| Final complete suite | **374** | **0** | **374** |
+
+Commands completed successfully:
+
+```sh
+mock-api/venv/bin/python -m pytest tests/test_audit_independent.py -q -k 'audit_bug' --tb=short
+mock-api/venv/bin/python -m pytest tests/test_dispatcher.py tests/test_audit_independent.py -q --tb=short
+mock-api/venv/bin/python -m pytest -q --tb=short --junitxml=/tmp/ecommerce-phase12-fixes.xml
+mock-api/venv/bin/python -m compileall -q dispatcher mock-api tests
+git diff --check
+```
+
+The nine formerly failing independent audit reproductions all pass. The final
+JUnit report is `/tmp/ecommerce-phase12-fixes.xml` and the full suite completed
+with 374 passes in 10.32 seconds.
+
+### Confirmed issue corrections
+
+- **A01 (High):** Response validation previously trusted a recognized JSON code
+  before evaluating an ambiguous write status. Write validation now uses an
+  explicit status/code policy: only expected success and authoritative 4xx
+  rejection classes can be treated as known outcomes. 429, 5xx, redirects,
+  unexpected success statuses, malformed success bodies, transport exceptions,
+  and post-write validation exceptions produce non-recoverable
+  `WRITE_OUTCOME_UNKNOWN`. Writes still have no automatic retry path. Regression
+  coverage executes both a real refund and a real price change before replacing
+  their responses with contradictory HTTP 500 validation errors.
+- **A02 (Medium):** Unknown JSON error fields previously masked HTTP 429 before
+  transient classification. HTTP 429 now enters `UPSTREAM_UNAVAILABLE` read
+  handling and consumes at most the configured two retries. Explicit
+  non-recoverable authorization/business errors remain non-retriable, and writes
+  remain non-retriable.
+- **A03 (Medium):** Refund receipt IDs and timestamps were unconstrained strings.
+  Receipt IDs now use the bounded identifier contract; receipt reasons retain
+  the request length bound; timestamps require valid ISO 8601 calendar/time
+  values with an explicit timezone. Invalid write receipts conservatively return
+  `WRITE_OUTCOME_UNKNOWN` because the backend may already have committed.
+- **A04 (Medium):** Pagination checks did not prove that returned list entries
+  matched requested filters or ordering. Postconditions now verify order status,
+  date, keyword and sort semantics; product status, category and keyword
+  semantics; customer sorting; and ranking order/rank sequence where each is
+  directly verifiable from the returned page.
+- **A05 (Medium):** The shared day type enforced only a textual shape. Shared
+  day, timestamp, and month validators now parse real calendar values. Date and
+  timestamp contracts publish JSON Schema `format` values in addition to strict
+  Pydantic validation.
+- **A06 (Medium):** Gateway JSON decoding could raise before dispatcher audit
+  creation. Malformed media types, parser failures, and recursion-depth failures
+  now flow through the normal structured `INVALID_ARGUMENT` observation path,
+  producing a trace ID and durable audit record without exposing the request
+  body. Valid identifiable requests continue to retain their registered tool in
+  the audit.
+- **A07 (Medium):** Unexpected exceptions bypassed per-attempt outcomes and lost
+  diagnostics. Every unexpected backend attempt now records `INTERNAL_ERROR` or
+  `WRITE_OUTCOME_UNKNOWN`; dispatcher and audit boundary failures emit an error
+  log containing only trace ID, stage, and exception type. Exception messages,
+  arguments, tokens, headers, and bodies are excluded from client responses,
+  logs, and audit request records.
+- **A08 (Low):** Summary and alert endpoints used different exact-boundary
+  comparisons. Both now share one `stock >= threshold * 5` overstock predicate.
+
+### Files changed
+
+- `dispatcher/validator.py`: status/code precedence, read retry classification,
+  and request/response consistency checks.
+- `dispatcher/dispatcher.py`: write-aware response validation, safe diagnostics,
+  and complete attempt outcomes.
+- `dispatcher/schemas.py`: reusable strict date/time/month and receipt contracts.
+- `dispatcher/gateway.py`: structured handling for malformed and deeply nested
+  JSON requests.
+- `mock-api/read_api.py`: shared overstock boundary predicate.
+- `tests/test_dispatcher.py`: 14 focused regression cases covering the corrected
+  policy and contract gaps.
+- `worklog.md`: this implementation and verification record.
+
+### Remaining risks and intentional limits
+
+- Audit and business databases are still separate transactions. An ambiguous
+  write requires manual state reconciliation; idempotency is intentionally
+  deferred to a later phase, so the dispatcher correctly says not to retry.
+- `Retry-After`, response-size limits, end-to-end request deadlines, process-level
+  SQLite concurrency, disk-full behavior, and live TCP/TLS failure modes remain
+  operational coverage gaps.
+- Response postconditions validate fields and relationships visible in a page;
+  they cannot independently prove aggregate completeness, omitted rows, or the
+  backend's full-dataset calculations.
+- The existing documented legacy anonymous-read compatibility mode still exposes
+  demo tenant reads when explicitly enabled. Strict authentication remains the
+  tested production-style configuration.
+- No statement or branch coverage percentage was generated. The 374-pass result
+  verifies the exercised behavior but is not a claim that additional defects are
+  absent.
+
+No commit or push was performed.

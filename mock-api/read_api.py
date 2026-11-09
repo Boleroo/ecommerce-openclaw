@@ -28,6 +28,10 @@ def query_integer(name, default, maximum=None):
     return value
 
 
+def is_overstock(stock, threshold):
+    return stock >= threshold * 5
+
+
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
@@ -224,7 +228,7 @@ def inventory_summary():
     total_stock = sum(v["stock"] for v in inventory().values())
     low = sum(1 for v in inventory().values() if 0 < v["stock"] < v["threshold"])
     oos = sum(1 for v in inventory().values() if v["stock"] == 0)
-    over = sum(1 for v in inventory().values() if v["stock"] > v["threshold"] * 5)
+    over = sum(1 for v in inventory().values() if is_overstock(v["stock"], v["threshold"]))
 
     return jsonify(
         {
@@ -255,7 +259,7 @@ def inventory_alerts():
             continue
         if alert_type == "low_stock" and (stock == 0 or stock >= th):
             continue
-        if alert_type == "overstock" and stock < th * 5:
+        if alert_type == "overstock" and not is_overstock(stock, th):
             continue
 
         est_days = round(stock / max(daily, 0.1), 1)
