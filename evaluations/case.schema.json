@@ -1,0 +1,310 @@
+{
+  "$defs": {
+    "AuthenticatedUser": {
+      "additionalProperties": false,
+      "properties": {
+        "identity": {
+          "enum": [
+            "agent_a",
+            "agent_b",
+            "viewer_a",
+            "admin_a"
+          ],
+          "title": "Identity",
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "viewer",
+            "operator",
+            "manager",
+            "admin"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "tenant_id": {
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "user_id": {
+          "title": "User Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity",
+        "user_id",
+        "tenant_id",
+        "role"
+      ],
+      "title": "AuthenticatedUser",
+      "type": "object"
+    },
+    "ExpectedArguments": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "relevant_only": {
+          "default": true,
+          "title": "Relevant Only",
+          "type": "boolean"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool",
+        "arguments"
+      ],
+      "title": "ExpectedArguments",
+      "type": "object"
+    },
+    "GradingRules": {
+      "additionalProperties": false,
+      "properties": {
+        "dimensions": {
+          "items": {
+            "enum": [
+              "tool_selection",
+              "arguments",
+              "observation",
+              "state",
+              "security",
+              "recovery"
+            ],
+            "type": "string"
+          },
+          "title": "Dimensions",
+          "type": "array"
+        },
+        "expected_refund_delta": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Refund Delta"
+        },
+        "forbidden_attempt_is_failure": {
+          "default": false,
+          "title": "Forbidden Attempt Is Failure",
+          "type": "boolean"
+        },
+        "requires_real_agent": {
+          "default": true,
+          "title": "Requires Real Agent",
+          "type": "boolean"
+        },
+        "state_unchanged": {
+          "default": false,
+          "title": "State Unchanged",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dimensions"
+      ],
+      "title": "GradingRules",
+      "type": "object"
+    },
+    "ReplayCall": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "execute": {
+          "default": true,
+          "title": "Execute",
+          "type": "boolean"
+        },
+        "simulated_observation": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Simulated Observation"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool"
+      ],
+      "title": "ReplayCall",
+      "type": "object"
+    },
+    "ReplayTrace": {
+      "additionalProperties": false,
+      "properties": {
+        "calls": {
+          "items": {
+            "$ref": "#/$defs/ReplayCall"
+          },
+          "title": "Calls",
+          "type": "array"
+        },
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "response": {
+          "title": "Response",
+          "type": "string"
+        },
+        "status": {
+          "default": "completed",
+          "enum": [
+            "completed",
+            "refused",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "response"
+      ],
+      "title": "ReplayTrace",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "authenticated_user": {
+      "$ref": "#/$defs/AuthenticatedUser"
+    },
+    "case_id": {
+      "pattern": "^[a-z][a-z0-9_-]{2,63}$",
+      "title": "Case Id",
+      "type": "string"
+    },
+    "category": {
+      "enum": [
+        "tool_selection",
+        "argument_extraction",
+        "context_isolation",
+        "prompt_injection",
+        "approval_bypass",
+        "cross_tenant"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "conversation_history": {
+      "items": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object"
+      },
+      "title": "Conversation History",
+      "type": "array"
+    },
+    "description": {
+      "minLength": 10,
+      "title": "Description",
+      "type": "string"
+    },
+    "expected_arguments": {
+      "items": {
+        "$ref": "#/$defs/ExpectedArguments"
+      },
+      "title": "Expected Arguments",
+      "type": "array"
+    },
+    "expected_final_state": {
+      "additionalProperties": true,
+      "title": "Expected Final State",
+      "type": "object"
+    },
+    "expected_observation": {
+      "additionalProperties": true,
+      "title": "Expected Observation",
+      "type": "object"
+    },
+    "expected_tools": {
+      "items": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Expected Tools",
+      "type": "array"
+    },
+    "forbidden_operations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Forbidden Operations",
+      "type": "array"
+    },
+    "grading_rules": {
+      "$ref": "#/$defs/GradingRules"
+    },
+    "initial_database_state": {
+      "additionalProperties": true,
+      "title": "Initial Database State",
+      "type": "object"
+    },
+    "offline_trace": {
+      "$ref": "#/$defs/ReplayTrace"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+    },
+    "tenant_id": {
+      "title": "Tenant Id",
+      "type": "string"
+    },
+    "user_input": {
+      "minLength": 1,
+      "title": "User Input",
+      "type": "string"
+    }
+  },
+  "required": [
+    "case_id",
+    "category",
+    "description",
+    "user_input",
+    "authenticated_user",
+    "tenant_id",
+    "initial_database_state",
+    "expected_tools",
+    "grading_rules",
+    "offline_trace"
+  ],
+  "title": "EvaluationCase",
+  "type": "object"
+}

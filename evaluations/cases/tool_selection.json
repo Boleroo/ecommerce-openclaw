@@ -1,0 +1,776 @@
+[
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-01",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Lookup a single known order by its identifier.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "order_id": "EVAL-A-ORDER"
+        },
+        "relevant_only": true,
+        "tool": "get_order"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "get_order"
+    },
+    "expected_tools": [
+      [
+        "get_order"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "order_id": "EVAL-A-ORDER"
+          },
+          "execute": true,
+          "tool": "get_order"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Show order EVAL-A-ORDER."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-02",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "List paid orders with a status filter.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "status": "paid"
+        },
+        "relevant_only": true,
+        "tool": "list_orders"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "list_orders"
+    },
+    "expected_tools": [
+      [
+        "list_orders"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "status": "paid"
+          },
+          "execute": true,
+          "tool": "list_orders"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "List my paid orders."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-03",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Summarize order status counts for today.",
+    "expected_arguments": [],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "order_stats"
+    },
+    "expected_tools": [
+      [
+        "order_stats"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {},
+          "execute": true,
+          "tool": "order_stats"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "How many orders are in each status today?"
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-04",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Search the product catalog rather than inventory.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "keyword": "白色",
+          "status": "on_sale"
+        },
+        "relevant_only": true,
+        "tool": "list_products"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "list_products"
+    },
+    "expected_tools": [
+      [
+        "list_products"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "keyword": "白色",
+            "status": "on_sale"
+          },
+          "execute": true,
+          "tool": "list_products"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Find on-sale white shoes in the catalog."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-05",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Rank products by monthly revenue.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "limit": 5,
+          "period": "month",
+          "sort": "revenue_desc"
+        },
+        "relevant_only": true,
+        "tool": "product_ranking"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "product_ranking"
+    },
+    "expected_tools": [
+      [
+        "product_ranking"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "limit": 5,
+            "period": "month",
+            "sort": "revenue_desc"
+          },
+          "execute": true,
+          "tool": "product_ranking"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Rank this month's products by revenue, top five."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-06",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Request an aggregate inventory summary.",
+    "expected_arguments": [],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "inventory_summary"
+    },
+    "expected_tools": [
+      [
+        "inventory_summary"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {},
+          "execute": true,
+          "tool": "inventory_summary"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Give me the inventory summary."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-07",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Request only out-of-stock alerts.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "type": "out_of_stock"
+        },
+        "relevant_only": true,
+        "tool": "inventory_alerts"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "inventory_alerts"
+    },
+    "expected_tools": [
+      [
+        "inventory_alerts"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "type": "out_of_stock"
+          },
+          "execute": true,
+          "tool": "inventory_alerts"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Which items are out of stock?"
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-08",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Inspect inventory for a specific SKU.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "sku": "SHOE-WH-42"
+        },
+        "relevant_only": true,
+        "tool": "inventory_sku"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "inventory_sku"
+    },
+    "expected_tools": [
+      [
+        "inventory_sku"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "sku": "SHOE-WH-42"
+          },
+          "execute": true,
+          "tool": "inventory_sku"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Check stock for SHOE-WH-42."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-09",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Request replenishment recommendations.",
+    "expected_arguments": [],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "restock_suggestions"
+    },
+    "expected_tools": [
+      [
+        "restock_suggestions"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {},
+          "execute": true,
+          "tool": "restock_suggestions"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "What should I reorder?"
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-10",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Request a persisted customer summary.",
+    "expected_arguments": [],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "customers_summary"
+    },
+    "expected_tools": [
+      [
+        "customers_summary"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {},
+          "execute": true,
+          "tool": "customers_summary"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Summarize our customers."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-11",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Request a thirty-day order trend.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "days": 30,
+          "metric": "orders"
+        },
+        "relevant_only": true,
+        "tool": "analytics_trend"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "analytics_trend"
+    },
+    "expected_tools": [
+      [
+        "analytics_trend"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "days": 30,
+            "metric": "orders"
+          },
+          "execute": true,
+          "tool": "analytics_trend"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Show order counts over the last 30 days."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "tool_selection-12",
+    "category": "tool_selection",
+    "conversation_history": [],
+    "description": "Request geographic customer distribution.",
+    "expected_arguments": [],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "customers_geo"
+    },
+    "expected_tools": [
+      [
+        "customers_geo"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {},
+          "execute": true,
+          "tool": "customers_geo"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Where are our customers located?"
+  }
+]

@@ -467,6 +467,10 @@ OpenClaw can invoke the Dispatcher successfully, receive structured observations
 
 ## Phase 6 — Automated Evaluation Framework
 
+**Implementation status (2026-11-10):** Phase 6A offline framework is complete.
+Phase 6B real OpenClaw/model evaluation is designed but intentionally unexecuted;
+no real-model measurements exist yet.
+
 Implement a JSON-driven test framework using pytest.
 
 Create at least 72 test cases across six dimensions:

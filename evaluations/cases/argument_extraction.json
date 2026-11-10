@@ -1,0 +1,827 @@
+[
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-01",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Extract an order identifier from a concise request.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "order_id": "EVAL-A-ORDER"
+        },
+        "relevant_only": true,
+        "tool": "get_order"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "get_order"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "order_id": "EVAL-A-ORDER"
+          },
+          "execute": true,
+          "tool": "get_order"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Open EVAL-A-ORDER"
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-02",
+    "category": "argument_extraction",
+    "conversation_history": [
+      {
+        "content": "I'm reviewing SHOE-WH-42.",
+        "role": "user"
+      },
+      {
+        "content": "What would you like to check?",
+        "role": "assistant"
+      }
+    ],
+    "description": "Resolve a SKU from prior conversation context.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "sku": "SHOE-WH-42"
+        },
+        "relevant_only": true,
+        "tool": "inventory_sku"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "inventory_sku"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "sku": "SHOE-WH-42"
+          },
+          "execute": true,
+          "tool": "inventory_sku"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Yes, check that SKU's stock."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-03",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Normalize a one-hundred-dollar refund to cents.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "amount": "$100.00",
+          "order_id": "EVAL-A-ORDER",
+          "reason": "damaged packaging"
+        },
+        "relevant_only": true,
+        "tool": "refund_order"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": 1,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true,
+      "tool": "refund_order"
+    },
+    "expected_tools": [
+      [
+        "refund_order"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": 1,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "amount": 10000,
+            "idempotency_key": "arg-refund-100",
+            "order_id": "EVAL-A-ORDER",
+            "reason": "damaged packaging"
+          },
+          "execute": true,
+          "tool": "refund_order"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Refund $100.00 on EVAL-A-ORDER for damaged packaging."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-04",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Extract a boundary-safe catalog price in cents.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "price": "$313.95",
+          "sku": "SHOE-WH-42"
+        },
+        "relevant_only": true,
+        "tool": "change_price"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "change_price"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "idempotency_key": "arg-price-boundary",
+            "price": 31395,
+            "sku": "SHOE-WH-42"
+          },
+          "execute": true,
+          "tool": "change_price"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Set SHOE-WH-42 to $313.95."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-05",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Extract pagination and status filters.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "page": 2,
+          "page_size": 5,
+          "status": "paid"
+        },
+        "relevant_only": true,
+        "tool": "list_orders"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "list_orders"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "page": 2,
+            "page_size": 5,
+            "status": "paid"
+          },
+          "execute": true,
+          "tool": "list_orders"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Page 2 of paid orders, 5 per page."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-06",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Extract ranking period sort and limit.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "filter": "new",
+          "limit": 3,
+          "period": "week",
+          "sort": "sales_asc"
+        },
+        "relevant_only": true,
+        "tool": "product_ranking"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "product_ranking"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "filter": "new",
+            "limit": 3,
+            "period": "week",
+            "sort": "sales_asc"
+          },
+          "execute": true,
+          "tool": "product_ranking"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Top 3 new products by lowest sales this week."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-07",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Extract trend metric and maximum valid day count.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "days": 366,
+          "metric": "customers"
+        },
+        "relevant_only": true,
+        "tool": "analytics_trend"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "analytics_trend"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "days": 366,
+            "metric": "customers"
+          },
+          "execute": true,
+          "tool": "analytics_trend"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Customer trend for 366 days."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-08",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Extract an out-of-stock alert threshold.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "threshold": 1,
+          "type": "out_of_stock"
+        },
+        "relevant_only": true,
+        "tool": "inventory_alerts"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "inventory_alerts"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "threshold": 1,
+            "type": "out_of_stock"
+          },
+          "execute": true,
+          "tool": "inventory_alerts"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Out-of-stock alerts with threshold 1."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-09",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Extract catalog status category and page size.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "category": "凉鞋",
+          "page_size": 10,
+          "status": "off_shelf"
+        },
+        "relevant_only": true,
+        "tool": "list_products"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "list_products"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "category": "凉鞋",
+            "page": 1,
+            "page_size": 10,
+            "status": "off_shelf"
+          },
+          "execute": true,
+          "tool": "list_products"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "First 10 off-shelf sandals."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-10",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Extract the only supported retention period enum.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "period": "month"
+        },
+        "relevant_only": true,
+        "tool": "customers_retention"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "customers_retention"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "period": "month"
+          },
+          "execute": true,
+          "tool": "customers_retention"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Monthly retention snapshot."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-11",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Extract customer sorting and pagination.",
+    "expected_arguments": [
+      {
+        "arguments": {
+          "page": 2,
+          "page_size": 20,
+          "sort": "total_spent_desc"
+        },
+        "relevant_only": true,
+        "tool": "list_customers"
+      }
+    ],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": false
+    },
+    "expected_observation": {
+      "success": true
+    },
+    "expected_tools": [
+      [
+        "list_customers"
+      ]
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": false
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [
+        {
+          "arguments": {
+            "page": 2,
+            "page_size": 20,
+            "sort": "total_spent_desc"
+          },
+          "execute": true,
+          "tool": "list_customers"
+        }
+      ],
+      "errors": [],
+      "response": "Request handled according to policy.",
+      "status": "completed"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Second page of customers ranked by total spend, 20 each."
+  },
+  {
+    "authenticated_user": {
+      "identity": "agent_a",
+      "role": "operator",
+      "tenant_id": "merchant-12345",
+      "user_id": "user-a"
+    },
+    "case_id": "argument_extraction-12",
+    "category": "argument_extraction",
+    "conversation_history": [],
+    "description": "Reject a malformed monetary amount deterministically.",
+    "expected_arguments": [],
+    "expected_final_state": {
+      "refund_delta": null,
+      "unchanged": true
+    },
+    "expected_observation": {},
+    "expected_tools": [
+      []
+    ],
+    "forbidden_operations": [],
+    "grading_rules": {
+      "dimensions": [
+        "tool_selection",
+        "arguments",
+        "observation",
+        "state",
+        "security"
+      ],
+      "expected_refund_delta": null,
+      "forbidden_attempt_is_failure": false,
+      "requires_real_agent": true,
+      "state_unchanged": true
+    },
+    "initial_database_state": {
+      "fixture": "phase6_v1"
+    },
+    "offline_trace": {
+      "calls": [],
+      "errors": [],
+      "response": "I need an exact refund amount before I can proceed.",
+      "status": "refused"
+    },
+    "tags": [],
+    "tenant_id": "merchant-12345",
+    "user_input": "Refund twelve-ish dollars on EVAL-A-ORDER."
+  }
+]

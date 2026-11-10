@@ -1,8 +1,8 @@
-# E-commerce OpenClaw Agent Platform: Phases 1–5
+# E-commerce OpenClaw Agent Platform: Phases 1–6A
 
 The existing Flask Mock API now stores business data in SQLite using SQLAlchemy.
 All 20 original GET routes, their response fields, filtering, and pagination remain
-available. Phases 1–5 of `plan.md` are implemented. OpenClaw uses a native typed
+available. Phases 1–5 and the offline Phase 6A framework are implemented. OpenClaw uses a native typed
 Tool Plugin that forwards authenticated calls to the provider-independent
 Dispatcher; the four Skills no longer call Flask routes directly.
 
@@ -146,7 +146,7 @@ balance. Errors roll back changes. Add a stable `idempotency_key` JSON field or
 `Idempotency-Key` header to financial submissions to deduplicate them. Unkeyed
 legacy calls still represent new operations on every explicit invocation.
 These endpoints record local business state only; they do not call a payment
-provider. Skill migration and the evaluation framework remain later work.
+provider.
 
 ## Phase 2: Controlled Tool Dispatcher
 
@@ -523,10 +523,50 @@ tool selection, natural-language parameter extraction, Agent reasoning, and
 Observation-driven self-correction. No DashScope/OpenAI API was called, billing
 was not changed, and no model fallback was configured.
 
+## Phase 6A: automated offline evaluation
+
+`evaluations/` implements the JSON-driven evaluation pipeline:
+
+```text
+72-case dataset → runner → offline replay adapter → Dispatcher/backend/SQLite
+                                        ↓
+                              graders → metrics / Bad Cases
+```
+
+There are 12 independently reproducible cases in each of six categories: tool
+selection, argument extraction, context isolation, prompt injection defense,
+approval bypass defense, and cross-tenant defense. Every case validates against
+the generated formal JSON Schema. Each case receives a fresh temporary business
+database and Dispatcher audit database. Trusted identity aliases are resolved by
+the runner; dataset or Agent parameters cannot supply credentials or override a
+tenant.
+
+Run the offline Baseline and Improved configurations against the identical
+dataset:
+
+```sh
+mock-api/venv/bin/python -m evaluations.runner \
+  --mode offline --configuration both --report-dir evaluation-results
+```
+
+Use `--category`, `--case`, or `--rerun-failed` for focused runs. Reports are
+machine-readable JSON plus Markdown, with sanitized JSONL Bad Cases. Offline
+decisions are deterministic replay fixtures. Their results validate evaluation
+infrastructure and backend enforcement; they are never reported as real Agent
+performance. Real-model cases remain `REQUIRES_LLM` until Phase 6B is explicitly
+authorized and run.
+
+The future adapter is double-gated by `--allow-real-agent` and
+`OPENCLAW_EVAL_ENABLE_REAL_AGENT=1`, requires an explicit model, and fails if
+OpenClaw cannot provide reliable tool-call traces. See
+[`evaluations/README.md`](evaluations/README.md) for dataset details, report
+semantics, cost/turn controls, and the unexecuted Phase 6B workflow.
+
 ## Tests
 
 ```sh
 mock-api/venv/bin/python -m pytest -q
+mock-api/venv/bin/python -m pytest -q tests/test_phase6_evaluations.py
 
 cd openclaw-plugin
 npm run plugin:check
@@ -537,8 +577,9 @@ Tests use temporary SQLite files and cover legacy GET compatibility, business
 validation, authenticated reads/writes, tenant isolation (including reused IDs),
 database constraints, partial/full refunds, current catalog prices versus
 historical order prices, restart persistence, rollback on database failures,
-and concurrent refunds. These are backend unit/integration tests, not the
-later-phase Agent evaluation framework.
+and concurrent refunds. Phase 6 tests additionally cover dataset validation,
+isolated database resets, graders, negative traces, security assertions, Bad
+Case replay, configuration separation, metrics, and real-mode gating.
 
 Dispatcher tests additionally cover all registered tools for both tenants via
 HTTPX's WSGI transport into the real Flask backend, generated JSON Schemas using

@@ -1,5 +1,144 @@
 # Implementation worklog
 
+## 2026-11-10 — Phase 6A automated Agent evaluation framework
+
+### Scope and architecture
+
+Implemented Phase 6A only. No OpenClaw Agent turn, external model API, billing
+change, model fallback, global OpenClaw configuration change, commit, or push
+was performed. The implemented pipeline is:
+
+`JSON dataset -> runner -> Agent adapter -> Dispatcher/backend/SQLite -> graders -> reports/Bad Cases`
+
+The framework is a lightweight Python package under `evaluations/`. It reuses
+the existing Pydantic Tool Registry, Dispatcher, Flask application factory,
+authorization policies, approval workflow, and SQLite models. It does not add
+another Agent framework.
+
+### Dataset
+
+Added six checked-in JSON datasets with exactly 12 distinct cases each (72
+total): tool selection, argument extraction, context isolation, prompt
+injection, approval bypass, and cross-tenant access. Cases include multi-turn
+context, ambiguous/malformed requests, monetary and approval boundaries,
+legitimate and malicious requests, forged identity fields, indirect injection
+in retrieved data, unauthorized writes, and both tenants.
+
+`evaluations/schema.py` defines strict Pydantic case/trace models. The generated
+`evaluations/case.schema.json` is also checked in, and the loader independently
+validates every raw JSON object with JSON Schema before Pydantic parsing. Case
+identity uses a non-secret trusted alias; a case whose declared tenant differs
+from its authenticated identity is rejected. The dataset contains no runtime
+credentials.
+
+`scripts/generate_phase6_cases.py` is the reviewable source for regenerating
+the six JSON files and formal schema. The final dataset has 72 unique case IDs
+and 72 unique user inputs; the loader rejects duplicate IDs.
+
+### Execution and isolation
+
+`CaseEnvironment` creates a fresh temporary Flask application, business SQLite
+database, Dispatcher audit database, and deterministic `phase6_v1` fixture for
+every case. It adds stable tenant-A and tenant-B orders and trusted Viewer/Admin
+test identities. The offline adapter replays the simulated Agent decision but
+executes designated business calls through the real Dispatcher and Flask WSGI
+application. Production validation, tenant scoping, RBAC, risk policy,
+approvals, persistence, and structured Observations are therefore not mocked.
+
+Offline traces explicitly set `simulated_agent_decisions: true`; each tool event
+also distinguishes real business execution from simulated results. Every
+offline case records `real_agent_status: REQUIRES_LLM`. Offline metrics use the
+scope `OFFLINE_INFRASTRUCTURE_ONLY` and cannot be aggregated into real Agent
+performance.
+
+The runner supports all cases, one category, one case, failed-case replay,
+Baseline/Improved selection, and offline/real mode selection. It writes
+machine-readable JSON, concise Markdown, sanitized JSONL Bad Cases, database
+state differences, structured Observations, trace IDs, error distributions,
+per-category rates, and the requested accuracy/security/recovery metrics.
+
+### Grading and security assertions
+
+Implemented independent deterministic graders for tool selection, relevant
+argument subsets, monetary normalization, structured Observations, business
+state, security, and recovery. Tool selection supports multiple semantically
+acceptable sequences. A forbidden request blocked by the backend is recorded
+as an attempted but unsuccessful operation and is not incorrectly graded as a
+security bypass. A successful forbidden operation fails grading.
+
+State assertions distinguish business mutations (orders, prices, refunds) from
+expected security-control records such as a pending approval or idempotency
+receipt. High-risk requests therefore pass only when no unauthorized business
+state changed, even though the required pending approval was durably created.
+
+Bad Cases contain case/configuration/run identifiers, timestamp, input,
+expected and actual behavior, tool trace, Observations, diagnostics, and state
+differences. Recursive sanitization removes credential-like keys. Failed-case
+IDs can be selected for a subsequent run.
+
+### Baseline and Improved
+
+Both configurations keep identical datasets, seeded state, backend security,
+approval, tenant isolation, and idempotency controls. Baseline describes basic
+tool calling with no correction loop. Improved enables structured Observation
+feedback, enhanced descriptions, and a bounded two-step Agent-level recovery
+policy. Offline replay deliberately uses the same decisions for both, so both
+currently pass 72/72 infrastructure assertions and the comparison reports a
+zero difference. This is not a fabricated model-performance result.
+
+### Phase 6B design (not executed)
+
+Added a double-gated `OpenClawAgentAdapter` that reuses
+`openclaw agent --local --json`. Future execution requires the CLI flag,
+`OPENCLAW_EVAL_ENABLE_REAL_AGENT=1`, an explicit model, an explicit isolated
+OpenClaw state/config, and the runner's per-case loopback Dispatcher. The Agent
+credential is injected only into the trusted subprocess environment. The
+adapter allows one outer Agent turn per case and fails closed if OpenClaw JSON
+does not contain reliable tool-call traces rather than inferring them.
+
+Phase 6B still requires user authorization, provider credentials/cost limits,
+an isolated plugin-enabled OpenClaw profile, a one-case smoke test, confirmation
+of the installed runtime's actual trace shape, and verification of authentic
+multi-turn history injection. OpenClaw 2026.7.1 does not expose a
+provider-independent internal tool-loop cap in this CLI, so provider/runtime
+configuration must enforce an additional token/turn budget. No Phase 6B command
+was run.
+
+### Tests and verification
+
+- Dedicated Phase 6 suite: **18 passed**. It covers schema validation, all 72
+  cases loading, identity mismatch rejection, alternative tool sequences,
+  monetary normalization, negative traces, blocked-versus-successful forbidden
+  operations, isolated database reset, all 72 real business-stack executions,
+  reports, Bad Case generation/replay, configuration separation, metrics, and
+  real-mode gates.
+- Offline Baseline run: **72/72 infrastructure assertions passed**.
+- Offline Improved run: **72/72 infrastructure assertions passed**.
+- Complete Python Phase 1-6A regression suite: **548 passed** in 19.27 seconds.
+- TypeScript/Vitest adapter suite: **9 passed**.
+- `npm run plugin:check`: passed; plugin metadata remains current.
+- Python compilation and `git diff --check`: passed.
+
+### Encountered errors and fixes
+
+1. The first all-case run reported eight state failures because pending approval
+   and idempotency rows were treated as unauthorized business mutations. The
+   state grader now compares orders, products, and refunds for the unchanged
+   assertion while retaining approval/idempotency changes in report diffs.
+2. Initial data review found three cases with the same short user utterance.
+   They were rewritten with distinct session/tenant context; all 72 user inputs
+   are now unique rather than template padding.
+3. The dataset generator initially could not import `evaluations` when invoked
+   by file path. It now inserts the repository root before importing the formal
+   schema, matching the existing tool generator convention.
+4. The plugin metadata command consulted the default OpenClaw state and emitted
+   read-only health-state/legacy migration warnings. Sandbox restrictions denied
+   those writes; the check itself passed, and no global config was changed.
+
+Documentation was updated in `README.md`, `evaluations/README.md`, and
+`plan.md`. Phase 6B remains incomplete and no real-model performance percentage
+is claimed.
+
 ## 2026-11-09 — Phase 5 local integration acceptance
 
 ### Scope and isolation
